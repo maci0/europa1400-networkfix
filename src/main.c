@@ -98,11 +98,14 @@ static pF3720_t real_F3720 = NULL;
 
 /* -------- Hook implementations -------- */
 
-// The game uses GetTickCount for timing, which can wrap around after ~49.7 days.
-// This hook replaces it with a 64-bit version to prevent issues on long-running systems.
+
 DWORD WINAPI hook_GetTickCount(void) {
-    DWORD result = real_GetTickCount ? real_GetTickCount() : GetTickCount64() & 0xFFFFFFFF;
-    return result;
+    if (real_GetTickCount) {
+        return real_GetTickCount();
+    } else {
+        logf("[SERVER HOOK] GetTickCount was NULL. Falling back to 0");
+        return 0;
+    }
 }
 
 // This function is a handler for a specific packet type in the game's network code.
