@@ -19,7 +19,6 @@
 
 // Configuration constants
 static const char *kServerPath = "Server\\server.dll";
-static const char *kLogFile = "hook_log.txt";
 static const DWORD kMaxLogLines = 500;  // Max lines before rollover
 
 // Thread synchronization and module tracking
@@ -455,7 +454,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved) {
             wchar_t dllPath[MAX_PATH];
             GetModuleFileNameW(hModule, dllPath, MAX_PATH);
             PathRemoveFileSpecW(dllPath);
-            wcscat_s(dllPath, MAX_PATH, kLogFile);
+            wcscat_s(dllPath, MAX_PATH, L"\\hook_log.txt");
 
             g_LogFile = CreateFileW(
                 dllPath,
