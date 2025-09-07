@@ -224,13 +224,19 @@ static bool CreateHooks(void) {
     MH_STATUS status;
     bool success = true;
 
+    // Get server path from environment variable or use default
+    const char *serverPath = getenv("EUROPA1400_SERVER_PATH");
+    if (!serverPath) {
+        serverPath = kServerPath;
+    }
+
     // Load server.dll and hook the target function
-    HMODULE hServer = LoadLibraryA(kServerPath);
+    HMODULE hServer = LoadLibraryA(serverPath);
     if (!hServer) {
         DWORD error = GetLastError();
-        logf("[HOOK] Failed to load %s (error: %lu)", kServerPath, error);
+        logf("[HOOK] Failed to load %s (error: %lu)", serverPath, error);
     } else {
-        logf("[HOOK] Loaded %s at %p", kServerPath, (void*)hServer);
+        logf("[HOOK] Loaded %s at %p", serverPath, (void*)hServer);
 
         void *addrF3720 = (void*)((uintptr_t)hServer + 0x3720);
         status = MH_CreateHook(addrF3720, hook_F3720, (void**)&real_F3720);
@@ -333,7 +339,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved) {
         case DLL_PROCESS_ATTACH:
             DisableThreadLibraryCalls(hModule);
 
-            init_logging(hModule);
+            if (!init_logging(hModule)) {
+                OutputDebugStringA("[HOOK] Failed to initialize logging. Aborting attach.\n");
+                return FALSE;
+            }
 
             // Create initialization thread
             HANDLE hThread = CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
@@ -341,6 +350,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved) {
                 CloseHandle(hThread);
             } else {
                 logf("[HOOK] Failed to create initialization thread");
+                close_logging();
                 return FALSE;
             }
             break;

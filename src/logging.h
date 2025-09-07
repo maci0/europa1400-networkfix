@@ -11,7 +11,7 @@ extern bool g_CriticalSectionInitialized;
 extern HANDLE g_LogFile;
 extern UINT32 g_LogLineCount;
 
-void init_logging(HMODULE hModule);
+bool init_logging(HMODULE hModule);
 void close_logging(void);
 void logf(const char *fmt, ...);
 void log_winsock_error(const char *prefix, SOCKET s, int error);
