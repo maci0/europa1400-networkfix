@@ -16,7 +16,7 @@ desynchronize or disconnect clients on even minor packet loss.  Playing over
 VPNs such as Hamachi or Radmin is therefore nearly impossible because the game
 quickly throws "out of sync" errors.
 
-This project draws on research from [The-Guild-1-HookDLLs](https://github.com/maci0/The-Guild-1-HookDLLs)
+This project draws on research from [The-Guild-1-HookDLLs](https://github.com/HarryTheBird/The-Guild-1-HookDLLs)
 and provides a lightweight fix aimed at making the network stack resilient to
 real‑world connections.
 
