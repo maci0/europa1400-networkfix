@@ -1,0 +1,6 @@
+# Build artifacts
+*.dll
+*.asi
+*.lib
+bin/*
+!bin/networkfix.asi
