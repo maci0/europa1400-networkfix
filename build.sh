@@ -1,12 +1,10 @@
-zig build-lib -target x86-windows-gnu -dynamic -O ReleaseSmall -Iminhook-1.3.4/include -lc -lws2_32 -lshlwapi \
+zig build-lib -target x86-windows-gnu -dynamic -O ReleaseSmall -Ivendor/minhook/include -lc -lws2_32 -lshlwapi \
 main.c \
-minhook-1.3.4/src/buffer.c \
-minhook-1.3.4/src/hde/hde32.c \
-minhook-1.3.4/src/hde/hde64.c \
-minhook-1.3.4/src/hook.c \
-minhook-1.3.4/src/trampoline.c \
-
-
+vendor/minhook/src/buffer.c \
+vendor/minhook/src/hde/hde32.c \
+vendor/minhook/src/hde/hde64.c \
+vendor/minhook/src/hook.c \
+vendor/minhook/src/trampoline.c \
 
 mv main.dll networkfix.asi
-cp networkfix.asi ~/.wine/drive_c/Guild
+#cp networkfix.asi ~/.wine/drive_c/Guild
