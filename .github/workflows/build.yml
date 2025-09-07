@@ -1,0 +1,43 @@
+name: Build DLLs and injector
+on:
+  push:
+    branches:
+      - main # Only run on pushes to the main branch
+      - 'release/**' # And release branches
+  pull_request:
+    branches:
+      - main
+      - 'release/**'
+  workflow_dispatch: # Allows manual triggering from GitHub UI
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
+
+      - name: Build DLLs and injector
+        run: make
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: bin/networkfix.bin
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: latest
+          name: Latest Build
+          files:  bin/networkfix.bin
