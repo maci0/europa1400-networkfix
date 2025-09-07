@@ -31,4 +31,4 @@ Copy `bin/networkfix.asi` into your Europa 1400 game directory to test the fix.
 
 ## License
 
-MIT (see [LICENSE](LICENSE)).
+GPLv3 (see [LICENSE](LICENSE)).
