@@ -40,4 +40,4 @@ jobs:
         with:
           tag_name: latest
           name: Latest Build
-          files:  bin/networkfix.bin
+          files: bin/networkfix.bin
