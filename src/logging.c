@@ -8,7 +8,6 @@
 #include <stdarg.h>
 
 #include "logging.h"
-#include "utils.h"
 
 static const DWORD kMaxLogLines = 500;  // Max lines before rollover
 
@@ -60,6 +59,23 @@ void logf(const char *fmt, ...) {
     }
 
     LeaveCriticalSection(&g_LogCriticalSection);
+}
+
+static const char* GetErrorDescription(int errorCode) {
+    switch (errorCode) {
+        case WSAECONNRESET: return "WSAECONNRESET";
+        case WSAECONNABORTED: return "WSAECONNABORTED";
+        case WSAENETDOWN: return "WSAENETDOWN";
+        case WSAETIMEDOUT: return "WSAETIMEDOUT";
+        case WSAENOTCONN: return "WSAENOTCONN";
+        case WSAEWOULDBLOCK: return "WSAEWOULDBLOCK";
+        case WSAEINVAL: return "WSAEINVAL";
+        case WSAENOTSOCK: return "WSAENOTSOCK";
+        case WSAEFAULT: return "WSAEFAULT";
+        case WSAEINTR: return "WSAEINTR";
+        case WSAEMSGSIZE: return "WSAEMSGSIZE";
+        default: return "UNKNOWN";
+    }
 }
 
 void log_winsock_error(const char *prefix, SOCKET s, int error) {

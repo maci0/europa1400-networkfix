@@ -1,7 +1,7 @@
 ZIG ?= zig
 TARGET := bin/networkfix.asi
 MINHOOK_DIR := vendor/minhook
-SRCS := src/main.c src/logging.c src/utils.c \
+SRCS := src/main.c src/logging.c \
 $(MINHOOK_DIR)/src/buffer.c \
 $(MINHOOK_DIR)/src/hde/hde32.c \
 $(MINHOOK_DIR)/src/hde/hde64.c \
