@@ -6,10 +6,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-static CRITICAL_SECTION g_LogCriticalSection;
-static bool g_CriticalSectionInitialized = false;
-static HANDLE g_LogFile = INVALID_HANDLE_VALUE;
-static UINT32 g_LogLineCount = 0;
+extern CRITICAL_SECTION g_LogCriticalSection;
+extern bool g_CriticalSectionInitialized;
+extern HANDLE g_LogFile;
+extern UINT32 g_LogLineCount;
 
 void init_logging(HMODULE hModule);
 void close_logging(void);
