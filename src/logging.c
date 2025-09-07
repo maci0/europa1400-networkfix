@@ -42,39 +42,33 @@ void logf(const char *fmt, ...) {
     SYSTEMTIME st;
     GetLocalTime(&st);
     char timestamp[64];
-    snprintf(timestamp, sizeof(timestamp), "[%04d-%02d-%02d %02d:%02d:%02d.%03d] ",
+    int timestamp_len = snprintf(timestamp, sizeof(timestamp), "[%04d-%02d-%02d %02d:%02d:%02d.%03d] ",
              st.wYear, st.wMonth, st.wDay,
              st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
 
-    DWORD written;
-    WriteFile(g_LoggingContext.g_LogFile, timestamp, (DWORD)strlen(timestamp), &written, NULL);
+    char buffer[1024];
+    memcpy(buffer, timestamp, timestamp_len);
 
-    // Use dynamic allocation to prevent buffer overflows.
     va_list ap;
     va_start(ap, fmt);
-    int len = _vscprintf(fmt, ap);
+    int len = vsnprintf(buffer + timestamp_len, sizeof(buffer) - timestamp_len, fmt, ap);
     va_end(ap);
 
     if (len > 0) {
-        char *buffer = (char*)malloc(len + 2); // +2 for newline and null terminator
-        if (buffer) {
-            va_start(ap, fmt);
-            vsnprintf(buffer, len + 1, fmt, ap);
-            va_end(ap);
-
-            if (buffer[len-1] != '\n') {
-                buffer[len++] = '\n';
-                buffer[len] = '\0';
-            }
-
-            WriteFile(g_LoggingContext.g_LogFile, buffer, len, &written, NULL);
-            FlushFileBuffers(g_LoggingContext.g_LogFile);
-            free(buffer);
+        if (buffer[timestamp_len + len - 1] != '\n') {
+            buffer[timestamp_len + len] = '\n';
+            buffer[timestamp_len + len + 1] = '\0';
+            len++;
         }
+
+        DWORD written;
+        WriteFile(g_LoggingContext.g_LogFile, buffer, timestamp_len + len, &written, NULL);
+        FlushFileBuffers(g_LoggingContext.g_LogFile);
     }
 
     LeaveCriticalSection(&g_LoggingContext.g_LogCriticalSection);
 }
+
 
 
 static char* GetErrorDescription(int errorCode) {

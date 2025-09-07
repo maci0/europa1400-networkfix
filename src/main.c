@@ -31,7 +31,7 @@
 static const char *kServerPath = "Server\\server.dll";
 
 // Thread synchronization and module tracking
-static bool g_HooksInitialized = false;
+static BOOL g_HooksInitialized = false;
 
 // Base address and size of the server.dll module.
 // These are used to determine if a function call originated from the server.
@@ -40,13 +40,13 @@ static size_t g_ServerSize = 0;
 
 // Initializes the g_ServerBase and g_ServerSize variables.
 // This function is called once when the DLL is loaded.
-static void InitServerModuleRange(void) {
-    if (g_ServerBase != 0) return;
+static BOOL InitServerModuleRange(void) {
+    if (g_ServerBase != 0) return false;
 
     HMODULE hServer = GetModuleHandleA("server.dll");
     if (!hServer) {
         logf("[HOOK] server.dll not found in process");
-        return;
+        return false;
     }
 
     MODULEINFO mi = {0};
@@ -54,8 +54,11 @@ static void InitServerModuleRange(void) {
         g_ServerBase = (uintptr_t)mi.lpBaseOfDll;
         g_ServerSize = (size_t)mi.SizeOfImage;
         logf("[HOOK] server.dll mapped at %p, size: 0x%zx", (void*)g_ServerBase, g_ServerSize);
+        return true;
+
     } else {
         logf("[HOOK] Failed to get server.dll module info: %lu", GetLastError());
+        return false;
     }
 }
 
@@ -111,6 +114,9 @@ DWORD WINAPI hook_GetTickCount(void) {
 // This function is a handler for a specific packet type in the game's network code.
 // It is hooked to fix a bug where a negative value can be assigned to a field
 // in the packet context, causing instability.
+// This function is a handler for a specific packet type in the game's network code.
+// It is hooked to fix a bug where a negative value can be assigned to a field
+// in the packet context, causing instability.
 static int WINAPI hook_F3720(int *ctx, int received, int totalLen) {
     // Validate parameters
     if (!ctx) {
@@ -122,9 +128,7 @@ static int WINAPI hook_F3720(int *ctx, int received, int totalLen) {
     int ret = real_F3720(ctx, received, totalLen);
 
     // Apply fixes
-    bool modified = false;
-    // The server can sometimes set a negative value to this field, which causes
-    // instability. This fix ensures the value is never negative.
+    BOOL modified = false;
     if (ctx[0xE] < 0) {
         logf("[SERVER HOOK] F3720: Fixed negative ctx[0xE] (%d -> 0)", ctx[0xE]);
         ctx[0xE] = 0;
@@ -254,9 +258,9 @@ int WINAPI hook_send(SOCKET s, const char *buf, int len, int flags) {
 /* -------- Initialization -------- */
 
 // Creates all the hooks.
-static bool CreateHooks(void) {
+static BOOL CreateHooks(void) {
     MH_STATUS status;
-    bool success = true;
+    BOOL success = true;
 
     // Get server path from environment variable or use default
     const char *serverPath = getenv("EUROPA1400_SERVER_PATH");
@@ -269,6 +273,7 @@ static bool CreateHooks(void) {
     if (!hServer) {
         DWORD error = GetLastError();
         logf("[HOOK] Failed to load %s (error: %lu)", serverPath, error);
+        success = false;
     } else {
         logf("[HOOK] Loaded %s at %p", serverPath, (void*)hServer);
 
