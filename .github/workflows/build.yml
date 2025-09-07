@@ -1,4 +1,4 @@
-name: Build DLLs and injector
+name: Build Europa1400 Network Stability Plugin
 on:
   push:
     branches:
