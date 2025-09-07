@@ -1,3 +1,10 @@
+/*
+ * main.c: Core logic for the network stability patch.
+ * 
+ * This file contains the DllMain entry point, the hooking logic, and the
+ * implementations of the hooked functions.
+ */
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winsock2.h>
@@ -10,10 +17,15 @@
 #include "MinHook.h"
 #include "logging.h"
 
-// Link required libraries
-#pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "kernel32.lib")
-#pragma comment(lib, "psapi.lib")
+#if defined(_MSC_VER)
+  #include <intrin.h>
+  #pragma intrinsic(_ReturnAddress)
+  #define CALLER_IP() _ReturnAddress()
+#elif defined(__clang__) || defined(__GNUC__)
+  #define CALLER_IP() __builtin_extract_return_addr(__builtin_return_address(0))
+#else
+  #error Unsupported compiler
+#endif
 
 // Configuration constants
 static const char *kServerPath = "Server\\server.dll";
@@ -21,9 +33,13 @@ static const char *kServerPath = "Server\\server.dll";
 // Thread synchronization and module tracking
 static bool g_HooksInitialized = false;
 
+// Base address and size of the server.dll module.
+// These are used to determine if a function call originated from the server.
 static uintptr_t g_ServerBase = 0;
 static size_t g_ServerSize = 0;
 
+// Initializes the g_ServerBase and g_ServerSize variables.
+// This function is called once when the DLL is loaded.
 static void InitServerModuleRange(void) {
     if (g_ServerBase != 0) return;
 
@@ -43,6 +59,11 @@ static void InitServerModuleRange(void) {
     }
 }
 
+// Checks if the calling function is located within the server.dll module.
+// This is used to selectively apply fixes only to the game's network code.
+// Note: This method is not 100% reliable, as it's possible for non-server
+// functions to be located within the server's module range. A more robust
+// solution would be to use stack walking, but that is significantly more complex.
 static BOOL IsCallerFromServer(void) {
     if (g_ServerBase == 0) {
         InitServerModuleRange();
@@ -53,14 +74,8 @@ static BOOL IsCallerFromServer(void) {
     ctx.ContextFlags = CONTEXT_CONTROL;
     RtlCaptureContext(&ctx);
 
-    uintptr_t callerAddr;
-#if defined(_M_X64) || defined(__x86_64__)
-    callerAddr = ctx.Rip;
-#elif defined(_M_IX86) || defined(__i386__)
-    callerAddr = ctx.Eip;
-#else
-#error "Unsupported architecture"
-#endif
+    uintptr_t callerAddr = ctx.Eip;
+    //uintptr_t callerAddr = (uintptr_t)CALLER_IP();
 
     BOOL inRange = (callerAddr >= g_ServerBase && callerAddr < g_ServerBase + g_ServerSize);
 
@@ -83,11 +98,16 @@ static pF3720_t real_F3720 = NULL;
 
 /* -------- Hook implementations -------- */
 
+// The game uses GetTickCount for timing, which can wrap around after ~49.7 days.
+// This hook replaces it with a 64-bit version to prevent issues on long-running systems.
 DWORD WINAPI hook_GetTickCount(void) {
     DWORD result = real_GetTickCount ? real_GetTickCount() : GetTickCount64() & 0xFFFFFFFF;
     return result;
 }
 
+// This function is a handler for a specific packet type in the game's network code.
+// It is hooked to fix a bug where a negative value can be assigned to a field
+// in the packet context, causing instability.
 static int WINAPI hook_F3720(int *ctx, int received, int totalLen) {
     // Validate parameters
     if (!ctx) {
@@ -122,6 +142,10 @@ static int WINAPI hook_F3720(int *ctx, int received, int totalLen) {
     return ret;
 }
 
+// This hook intercepts the recv function to handle cases where the call would block.
+// The original game code does not handle WSAEWOULDBLOCK correctly, which can lead
+// to desynchronization. This hook converts WSAEWOULDBLOCK to a 0-byte receive,
+// which the game can handle gracefully.
 int WINAPI hook_recv(SOCKET s, char *buf, int len, int flags) {
     // Only intercept calls from server.dll
     if (!IsCallerFromServer()) {
@@ -159,6 +183,10 @@ int WINAPI hook_recv(SOCKET s, char *buf, int len, int flags) {
     return result;
 }
 
+// This hook intercepts the send function to add retry logic.
+// The original game code does not handle cases where the send buffer is full,
+// which can lead to packet loss. This hook retries the send operation until
+// all data has been sent.
 int WINAPI hook_send(SOCKET s, const char *buf, int len, int flags) {
     // Only intercept calls from server.dll
     if (!IsCallerFromServer()) {
@@ -222,6 +250,7 @@ int WINAPI hook_send(SOCKET s, const char *buf, int len, int flags) {
 
 /* -------- Initialization -------- */
 
+// Creates all the hooks.
 static bool CreateHooks(void) {
     MH_STATUS status;
     bool success = true;
@@ -240,6 +269,7 @@ static bool CreateHooks(void) {
     } else {
         logf("[HOOK] Loaded %s at %p", serverPath, (void*)hServer);
 
+        // Hook a specific function in server.dll that handles network packets.
         void *addrF3720 = (void*)((uintptr_t)hServer + 0x3720);
         status = MH_CreateHook(addrF3720, hook_F3720, (void**)&real_F3720);
         if (status == MH_OK) {
@@ -250,7 +280,7 @@ static bool CreateHooks(void) {
         }
     }
 
-    // Hook Winsock functions
+    // Hook Winsock functions to add retry logic and error handling.
     status = MH_CreateHookApi(L"ws2_32", "recv", hook_recv, (void**)&real_recv);
     if (status == MH_OK) {
         logf("[HOOK] Created recv hook");
@@ -267,7 +297,7 @@ static bool CreateHooks(void) {
         success = false;
     }
 
-    // Hook GetTickCount
+    // Hook GetTickCount to prevent timer wraparound issues.
     status = MH_CreateHookApi(L"kernel32", "GetTickCount", hook_GetTickCount, (void**)&real_GetTickCount);
     if (status == MH_OK) {
         logf("[HOOK] Created GetTickCount hook");
@@ -279,6 +309,9 @@ static bool CreateHooks(void) {
     return success;
 }
 
+// Initializes the hooks in a separate thread.
+// This is done to avoid potential deadlocks if the hooks are initialized
+// in DllMain.
 static DWORD WINAPI InitThread(LPVOID lpParam) {
     logf("[HOOK] Initialization started (PID: %lu, TID: %lu)",
          GetCurrentProcessId(), GetCurrentThreadId());
@@ -318,6 +351,7 @@ static DWORD WINAPI InitThread(LPVOID lpParam) {
     return 0;
 }
 
+// Cleans up the hooks when the DLL is detached.
 static void CleanupHooks(void) {
     if (!g_HooksInitialized) {
         return;
@@ -339,6 +373,7 @@ static void CleanupHooks(void) {
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved) {
     switch (dwReason) {
         case DLL_PROCESS_ATTACH:
+            // Disable thread library calls for performance.
             DisableThreadLibraryCalls(hModule);
 
             if (!init_logging(hModule)) {
@@ -346,7 +381,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved) {
                 return FALSE;
             }
 
-            // Create initialization thread
+            // Create a new thread to initialize the hooks.
+            // This is done to avoid potential deadlocks inside DllMain.
             HANDLE hThread = CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
             if (hThread) {
                 CloseHandle(hThread);

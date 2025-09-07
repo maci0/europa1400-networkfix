@@ -1,3 +1,7 @@
+/*
+ * logging.c: A simple file-based logging implementation.
+ */
+
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
@@ -14,6 +18,8 @@ LoggingContext g_LoggingContext = { 0 };
 
 static const DWORD kMaxLogLines = 500;  // Max lines before rollover
 
+// Resets the log file by truncating it to zero length.
+// This is called when the log file exceeds the maximum number of lines.
 static void ResetLogFile(void) {
     if (g_LoggingContext.g_LogFile != INVALID_HANDLE_VALUE) {
         SetFilePointer(g_LoggingContext.g_LogFile, 0, NULL, FILE_BEGIN);
@@ -22,6 +28,8 @@ static void ResetLogFile(void) {
     }
 }
 
+// Writes a formatted string to the log file.
+// This function is thread-safe.
 void logf(const char *fmt, ...) {
     if (!g_LoggingContext.g_CriticalSectionInitialized || g_LoggingContext.g_LogFile == INVALID_HANDLE_VALUE) return;
 
@@ -41,6 +49,7 @@ void logf(const char *fmt, ...) {
     DWORD written;
     WriteFile(g_LoggingContext.g_LogFile, timestamp, (DWORD)strlen(timestamp), &written, NULL);
 
+    // Use dynamic allocation to prevent buffer overflows.
     va_list ap;
     va_start(ap, fmt);
     int len = _vscprintf(fmt, ap);
@@ -66,6 +75,7 @@ void logf(const char *fmt, ...) {
 
     LeaveCriticalSection(&g_LoggingContext.g_LogCriticalSection);
 }
+
 
 static char* GetErrorDescription(int errorCode) {
     char *buffer = NULL;
