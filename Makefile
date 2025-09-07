@@ -22,5 +22,5 @@ $(SRCS)
 	mv main.dll $@
 
 clean:
-	rm -f main.dll $(TARGET)
+	rm -f main.dll main.lib $(TARGET)
 
