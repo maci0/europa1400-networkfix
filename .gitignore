@@ -3,4 +3,3 @@
 *.asi
 *.lib
 bin/*
-!bin/networkfix.asi
