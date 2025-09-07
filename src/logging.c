@@ -10,6 +10,11 @@
 
 #include "logging.h"
 
+CRITICAL_SECTION g_LogCriticalSection;
+bool g_CriticalSectionInitialized = false;
+HANDLE g_LogFile = INVALID_HANDLE_VALUE;
+UINT32 g_LogLineCount = 0;
+
 static const DWORD kMaxLogLines = 500;  // Max lines before rollover
 
 static void ResetLogFile(void) {
