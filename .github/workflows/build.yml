@@ -32,7 +32,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
-          path: bin/networkfix.bin
+          path: bin/networkfix.asi
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -40,4 +40,4 @@ jobs:
         with:
           tag_name: latest
           name: Latest Build
-          files: bin/networkfix.bin
+          files: bin/networkfix.asi
