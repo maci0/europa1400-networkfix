@@ -65,7 +65,7 @@ Contributions are welcome! If you would like to contribute to this project, plea
 ## Credits
 
 - [MinHook](https://github.com/TsudaKageyu/minhook) by Tsuda Kageyu
-- [Zig](https://ziglang.org/)
+- [HarryTheBird](https://github.com/HarryTheBird) for the original fix
 
 ## Disclaimer
 
