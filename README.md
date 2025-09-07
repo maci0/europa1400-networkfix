@@ -9,7 +9,6 @@ The project builds a Windows dynamic library using [Zig](https://ziglang.org/) a
 ```
 /
 ├── bin/                # Compiled plugin
-├── scripts/            # Helper scripts
 ├── src/                # Source code
 └── vendor/             # Third-party libraries
 ```
@@ -20,7 +19,7 @@ Ensure [Zig](https://ziglang.org/) is installed and initialize submodules:
 
 ```
 git submodule update --init --recursive
-./scripts/build.sh
+make
 ```
 
 The compiled plugin will be written to `bin/networkfix.asi`.
