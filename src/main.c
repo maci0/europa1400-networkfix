@@ -3,7 +3,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <psapi.h>
-#include <shlwapi.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -15,7 +14,6 @@
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "kernel32.lib")
 #pragma comment(lib, "psapi.lib")
-#pragma comment(lib, "shlwapi.lib")
 
 // Configuration constants
 static const char *kServerPath = "Server\\server.dll";
@@ -335,30 +333,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved) {
         case DLL_PROCESS_ATTACH:
             DisableThreadLibraryCalls(hModule);
 
-            // Initialize critical section for logging
-            InitializeCriticalSection(&g_LogCriticalSection);
-            g_CriticalSectionInitialized = true;
-
-            // Create log file in DLL directory
-            wchar_t dllPath[MAX_PATH];
-            GetModuleFileNameW(hModule, dllPath, MAX_PATH);
-            PathRemoveFileSpecW(dllPath);
-            wcscat_s(dllPath, MAX_PATH, L"\\hook_log.txt");
-
-            g_LogFile = CreateFileW(
-                dllPath,
-                GENERIC_WRITE,
-                FILE_SHARE_READ,
-                NULL,
-                OPEN_ALWAYS,
-                FILE_ATTRIBUTE_NORMAL,
-                NULL
-            );
-
-            if (g_LogFile != INVALID_HANDLE_VALUE) {
-                SetFilePointer(g_LogFile, 0, NULL, FILE_END);
-                logf("[HOOK] DLL attached to process %lu, log: %ls", GetCurrentProcessId(), dllPath);
-            }
+            init_logging(hModule);
 
             // Create initialization thread
             HANDLE hThread = CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
@@ -375,16 +350,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved) {
 
             CleanupHooks();
 
-            // Cleanup log file and critical section
-            if (g_LogFile != INVALID_HANDLE_VALUE) {
-                CloseHandle(g_LogFile);
-                g_LogFile = INVALID_HANDLE_VALUE;
-            }
-
-            if (g_CriticalSectionInitialized) {
-                DeleteCriticalSection(&g_LogCriticalSection);
-                g_CriticalSectionInitialized = false;
-            }
+            close_logging();
             break;
 
         case DLL_THREAD_ATTACH:
