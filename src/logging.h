@@ -6,10 +6,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-extern CRITICAL_SECTION g_LogCriticalSection;
-extern bool g_CriticalSectionInitialized;
-extern HANDLE g_LogFile;
-extern UINT32 g_LogLineCount;
+typedef struct {
+    CRITICAL_SECTION g_LogCriticalSection;
+    bool g_CriticalSectionInitialized;
+    HANDLE g_LogFile;
+    UINT32 g_LogLineCount;
+} LoggingContext;
+
+extern LoggingContext g_LoggingContext;
 
 bool init_logging(HMODULE hModule);
 void close_logging(void);
