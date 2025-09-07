@@ -100,6 +100,8 @@ static int WINAPI hook_F3720(int *ctx, int received, int totalLen) {
 
     // Apply fixes
     bool modified = false;
+    // The server can sometimes set a negative value to this field, which causes
+    // instability. This fix ensures the value is never negative.
     if (ctx[0xE] < 0) {
         logf("[SERVER HOOK] F3720: Fixed negative ctx[0xE] (%d -> 0)", ctx[0xE]);
         ctx[0xE] = 0;
