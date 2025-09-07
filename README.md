@@ -25,15 +25,6 @@ packet loss and latency.
 The project builds a Windows dynamic library using [Zig](https://ziglang.org/)
 and MinHook to implement the hooks.
 
-## Project structure
-
-```
-/
-├── bin/                # Compiled plugin
-├── src/                # Source code
-└── vendor/             # Third-party libraries
-```
-
 ## Building
 
 Ensure [Zig](https://ziglang.org/) is installed and initialize submodules:
