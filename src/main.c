@@ -27,8 +27,10 @@
   #error Unsupported compiler
 #endif
 
+static HMODULE g_hModule = NULL;
+
+
 // Configuration constants
-static const char *kServerPath = "Server\\server.dll";
 
 // Thread synchronization and module tracking
 static BOOL g_HooksInitialized = false;
@@ -252,6 +254,56 @@ int WINAPI hook_send(SOCKET s, const char *buf, int len, int flags) {
     return total;
 }
 
+// Reads the server path from the "game.ini" file.
+// The path is read from the "Server" key in the "[Network]" section.
+// Returns a pointer to a static buffer containing the path, or NULL on failure.
+static const char* GetServerPathFromIni(void) {
+    static char serverPath[MAX_PATH];
+    char iniPath[MAX_PATH];
+
+    if (g_hModule == NULL) {
+        logf("[CONFIG] Module handle is NULL.");
+        return NULL;
+    }
+
+    // Get the path of the DLL
+    if (GetModuleFileNameA(g_hModule, iniPath, sizeof(iniPath)) == 0) {
+        logf("[CONFIG] Failed to get module file name: %lu", GetLastError());
+        return NULL;
+    }
+
+    // Find the last backslash and replace the filename with game.ini
+    char *last_slash = strrchr(iniPath, '\\');
+    if (last_slash) {
+        strcpy(last_slash + 1, "game.ini");
+    } else {
+        logf("[CONFIG] Could not find backslash in module path: %s", iniPath);
+        return NULL;
+    }
+
+    DWORD len = GetPrivateProfileStringA(
+        "Network",
+        "Server",
+        "", // Default value
+        serverPath,
+        sizeof(serverPath),
+        iniPath
+    );
+
+    if (len > 0) {
+        // Remove quotes if present
+        if (serverPath[0] == '"' && serverPath[len - 1] == '"') {
+            memmove(serverPath, serverPath + 1, len - 2);
+            serverPath[len - 2] = '\0';
+        }
+        logf("[CONFIG] Read server path from game.ini: %s", serverPath);
+        return serverPath;
+    }
+
+    logf("[CONFIG] Could not find 'Server' in '[Network]' section of %s", iniPath);
+    return NULL;
+}
+
 /* -------- Initialization -------- */
 
 // Creates all the hooks.
@@ -259,10 +311,10 @@ static BOOL CreateHooks(void) {
     MH_STATUS status;
     BOOL success = true;
 
-    // Get server path from environment variable or use default
-    const char *serverPath = getenv("EUROPA1400_SERVER_PATH");
+    // Get server path from game.ini or use default
+    const char *serverPath = GetServerPathFromIni();
     if (!serverPath) {
-        serverPath = kServerPath;
+        serverPath = "Server\\server.dll";
     }
 
     // Load server.dll and hook the target function
@@ -378,6 +430,7 @@ static void CleanupHooks(void) {
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved) {
     switch (dwReason) {
         case DLL_PROCESS_ATTACH:
+            g_hModule = hModule;
             // Disable thread library calls for performance.
             DisableThreadLibraryCalls(hModule);
 
