@@ -35,7 +35,9 @@ static void reset_log_file(void)
 void logf(const char *fmt, ...)
 {
     if (!g_logctx.critical_section_initialized || g_logctx.log_file == INVALID_HANDLE_VALUE)
+    {
         return;
+    }
 
     EnterCriticalSection(&g_logctx.critical_section);
 
