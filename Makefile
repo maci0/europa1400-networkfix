@@ -12,7 +12,7 @@ LDFLAGS := -lc -lws2_32 -lshlwapi
 
 .PHONY: all clean
 
-all: $(TARGET)
+all: format $(TARGET)
 
 $(TARGET): $(SRCS)
 	mkdir -p $(dir $@)
@@ -23,4 +23,7 @@ $(SRCS)
 
 clean:
 	rm -f main.dll main.lib $(TARGET)
+
+format:
+	clang-format -i src/*
 
