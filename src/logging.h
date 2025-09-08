@@ -7,10 +7,10 @@
 #include <stdint.h>
 
 typedef struct {
-    CRITICAL_SECTION g_LogCriticalSection;
-    bool g_CriticalSectionInitialized;
-    HANDLE g_LogFile;
-    UINT32 g_LogLineCount;
+    CRITICAL_SECTION LogCriticalSection;
+    bool CriticalSectionInitialized;
+    HANDLE LogFile;
+    UINT32 LogLineCount;
 } LoggingContext;
 
 extern LoggingContext g_LoggingContext;
