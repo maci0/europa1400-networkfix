@@ -44,7 +44,9 @@ static size_t    g_ServerSize = 0;
 static BOOL InitServerModuleRange(void)
 {
     if (g_ServerBase != 0)
+    {
         return false;
+    }
 
     HMODULE hServer = GetModuleHandleA("server.dll");
     if (!hServer)
@@ -79,7 +81,9 @@ static BOOL IsCallerFromServer(void)
     {
         InitServerModuleRange();
         if (g_ServerBase == 0)
+        {
             return FALSE;
+        }
     }
 
     CONTEXT ctx = {0};
@@ -101,8 +105,8 @@ static BOOL IsCallerFromServer(void)
 }
 
 /* -------- Original function pointers -------- */
-static int(WINAPI *real_recv)(SOCKET, char *, int, int) = NULL;
-static int(WINAPI *real_send)(SOCKET, const char *, int, int) = NULL;
+static int(WSAAPI *real_recv)(SOCKET, char *, int, int) = NULL;
+static int(WSAAPI *real_send)(SOCKET, const char *, int, int) = NULL;
 static DWORD(WINAPI *real_GetTickCount)(void) = NULL;
 
 /* Server.dll target function @ RVA 0x3720 */
@@ -111,7 +115,7 @@ static pF3720_t real_F3720 = NULL;
 
 /* -------- Hook implementations -------- */
 
-DWORD WINAPI hook_GetTickCount(void)
+static DWORD WINAPI hook_GetTickCount(void)
 {
     if (real_GetTickCount)
     {
@@ -167,7 +171,7 @@ static int WINAPI hook_F3720(int *ctx, int received, int totalLen)
 // The original game code does not handle WSAEWOULDBLOCK correctly, which can lead
 // to desynchronization. This hook converts WSAEWOULDBLOCK to a 0-byte receive,
 // which the game can handle gracefully.
-int WINAPI hook_recv(SOCKET s, char *buf, int len, int flags)
+static int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
 {
     // Only intercept calls from server.dll
     if (!IsCallerFromServer())
@@ -216,7 +220,7 @@ int WINAPI hook_recv(SOCKET s, char *buf, int len, int flags)
 // The original game code does not handle cases where the send buffer is full,
 // which can lead to packet loss. This hook retries the send operation until
 // all data has been sent.
-int WINAPI hook_send(SOCKET s, const char *buf, int len, int flags)
+static int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 {
     // Only intercept calls from server.dll
     if (!IsCallerFromServer())
