@@ -1,5 +1,6 @@
 ZIG ?= zig
 TARGET := bin/networkfix.asi
+DEBUG_TARGET := bin/networkfix-debug.asi
 MINHOOK_DIR := vendor/minhook
 SRCS := src/main.c src/logging.c \
 $(MINHOOK_DIR)/src/buffer.c \
@@ -14,6 +15,8 @@ LDFLAGS := -lc -lws2_32 -lshlwapi
 
 all: format $(TARGET)
 
+debug: format $(DEBUG_TARGET)
+
 $(TARGET): $(SRCS)
 	mkdir -p $(dir $@)
 	$(ZIG) build-lib -target x86-windows-gnu -dynamic -O ReleaseSmall \
@@ -21,8 +24,15 @@ $(CFLAGS) $(LDFLAGS) \
 $(SRCS)
 	mv main.dll $@
 
+$(DEBUG_TARGET): $(SRCS)
+	mkdir -p $(dir $@)
+	$(ZIG) build-lib -target x86-windows-gnu -dynamic -O Debug \
+$(CFLAGS) $(LDFLAGS) \
+$(SRCS)
+	mv main.dll $@
+
 clean:
-	rm -f main.dll main.lib $(TARGET)
+	rm -f main.dll main.lib $(TARGET) $(DEBUG_TARGET)
 
 format:
 	clang-format -i src/*
