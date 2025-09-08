@@ -3,3 +3,4 @@
 *.asi
 *.lib
 bin/*
+.env
