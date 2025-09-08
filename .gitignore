@@ -2,5 +2,6 @@
 *.dll
 *.asi
 *.lib
+*.pdb
 bin/*
 .env
