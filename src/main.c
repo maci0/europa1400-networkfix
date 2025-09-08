@@ -1,34 +1,33 @@
 /*
  * main.c: Core logic for the network stability patch.
- * 
+ *
  * This file contains the DllMain entry point, the hooking logic, and the
  * implementations of the hooked functions.
  */
 
 #define WIN32_LEAN_AND_MEAN
+#include "MinHook.h"
+#include "logging.h"
+#include <psapi.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <psapi.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <string.h>
-#include "MinHook.h"
-#include "logging.h"
 
 #if defined(_MSC_VER)
-  #include <intrin.h>
-  #pragma intrinsic(_ReturnAddress)
-  #define CALLER_IP() _ReturnAddress()
+#include <intrin.h>
+#pragma intrinsic(_ReturnAddress)
+#define CALLER_IP() _ReturnAddress()
 #elif defined(__clang__) || defined(__GNUC__)
-  #define CALLER_IP() __builtin_extract_return_addr(__builtin_return_address(0))
+#define CALLER_IP() __builtin_extract_return_addr(__builtin_return_address(0))
 #else
-  #error Unsupported compiler
+#error Unsupported compiler
 #endif
 
 static HMODULE g_hModule = NULL;
-
 
 // Configuration constants
 
@@ -38,27 +37,32 @@ static BOOL g_HooksInitialized = false;
 // Base address and size of the server.dll module.
 // These are used to determine if a function call originated from the server.
 static uintptr_t g_ServerBase = 0;
-static size_t g_ServerSize = 0;
+static size_t    g_ServerSize = 0;
 
 // Initializes the g_ServerBase and g_ServerSize variables.
 // This function is called once when the DLL is loaded.
-static BOOL InitServerModuleRange(void) {
-    if (g_ServerBase != 0) return false;
+static BOOL InitServerModuleRange(void)
+{
+    if (g_ServerBase != 0)
+        return false;
 
     HMODULE hServer = GetModuleHandleA("server.dll");
-    if (!hServer) {
+    if (!hServer)
+    {
         logf("[HOOK] server.dll not found in process");
         return false;
     }
 
     MODULEINFO mi = {0};
-    if (GetModuleInformation(GetCurrentProcess(), hServer, &mi, sizeof(mi))) {
+    if (GetModuleInformation(GetCurrentProcess(), hServer, &mi, sizeof(mi)))
+    {
         g_ServerBase = (uintptr_t)mi.lpBaseOfDll;
         g_ServerSize = (size_t)mi.SizeOfImage;
-        logf("[HOOK] server.dll mapped at %p, size: 0x%zx", (void*)g_ServerBase, g_ServerSize);
+        logf("[HOOK] server.dll mapped at %p, size: 0x%zx", (void *)g_ServerBase, g_ServerSize);
         return true;
-
-    } else {
+    }
+    else
+    {
         logf("[HOOK] Failed to get server.dll module info: %lu", GetLastError());
         return false;
     }
@@ -69,10 +73,13 @@ static BOOL InitServerModuleRange(void) {
 // Note: This method is not 100% reliable, as it's possible for non-server
 // functions to be located within the server's module range. A more robust
 // solution would be to use stack walking, but that is significantly more complex.
-static BOOL IsCallerFromServer(void) {
-    if (g_ServerBase == 0) {
+static BOOL IsCallerFromServer(void)
+{
+    if (g_ServerBase == 0)
+    {
         InitServerModuleRange();
-        if (g_ServerBase == 0) return FALSE;
+        if (g_ServerBase == 0)
+            return FALSE;
     }
 
     CONTEXT ctx = {0};
@@ -80,34 +87,38 @@ static BOOL IsCallerFromServer(void) {
     RtlCaptureContext(&ctx);
 
     uintptr_t callerAddr = ctx.Eip;
-    //uintptr_t callerAddr = (uintptr_t)CALLER_IP();
+    // uintptr_t callerAddr = (uintptr_t)CALLER_IP();
 
     BOOL inRange = (callerAddr >= g_ServerBase && callerAddr < g_ServerBase + g_ServerSize);
 
-    if (inRange) {
-        logf("[HOOK] Caller from server.dll: 0x%p (offset +0x%zx)",
-             (void*)callerAddr, (size_t)(callerAddr - g_ServerBase));
+    if (inRange)
+    {
+        logf("[HOOK] Caller from server.dll: 0x%p (offset +0x%zx)", (void *)callerAddr,
+             (size_t)(callerAddr - g_ServerBase));
     }
 
     return inRange;
 }
 
 /* -------- Original function pointers -------- */
-static int (WINAPI *real_recv)(SOCKET, char*, int, int) = NULL;
-static int (WINAPI *real_send)(SOCKET, const char*, int, int) = NULL;
-static DWORD (WINAPI *real_GetTickCount)(void) = NULL;
+static int(WINAPI *real_recv)(SOCKET, char *, int, int) = NULL;
+static int(WINAPI *real_send)(SOCKET, const char *, int, int) = NULL;
+static DWORD(WINAPI *real_GetTickCount)(void) = NULL;
 
 /* Server.dll target function @ RVA 0x3720 */
-typedef int (WINAPI *pF3720_t)(int *ctx, int received, int totalLen);
+typedef int(WINAPI *pF3720_t)(int *ctx, int received, int totalLen);
 static pF3720_t real_F3720 = NULL;
 
 /* -------- Hook implementations -------- */
 
-
-DWORD WINAPI hook_GetTickCount(void) {
-    if (real_GetTickCount) {
+DWORD WINAPI hook_GetTickCount(void)
+{
+    if (real_GetTickCount)
+    {
         return real_GetTickCount();
-    } else {
+    }
+    else
+    {
         logf("[SERVER HOOK] GetTickCount was NULL. Falling back to 0");
         return 0;
     }
@@ -116,9 +127,11 @@ DWORD WINAPI hook_GetTickCount(void) {
 // This function is a handler for a specific packet type in the game's network code.
 // It is hooked to fix a bug where a negative value can be assigned to a field
 // in the packet context, causing instability.
-static int WINAPI hook_F3720(int *ctx, int received, int totalLen) {
+static int WINAPI hook_F3720(int *ctx, int received, int totalLen)
+{
     // Validate parameters
-    if (!ctx) {
+    if (!ctx)
+    {
         logf("[SERVER HOOK] F3720 called with NULL context");
         return -1;
     }
@@ -128,21 +141,23 @@ static int WINAPI hook_F3720(int *ctx, int received, int totalLen) {
 
     // Apply fixes
     BOOL modified = false;
-    if (ctx[0xE] < 0) {
+    if (ctx[0xE] < 0)
+    {
         logf("[SERVER HOOK] F3720: Fixed negative ctx[0xE] (%d -> 0)", ctx[0xE]);
         ctx[0xE] = 0;
         modified = true;
     }
 
-    if (ret < 0) {
+    if (ret < 0)
+    {
         logf("[SERVER HOOK] F3720: Fixed negative return value (%d -> 0)", ret);
         ret = 0;
         modified = true;
     }
 
-    if (modified) {
-        logf("[SERVER HOOK] F3720: received=%d, totalLen=%d, result=%d",
-             received, totalLen, ret);
+    if (modified)
+    {
+        logf("[SERVER HOOK] F3720: received=%d, totalLen=%d, result=%d", received, totalLen, ret);
     }
 
     return ret;
@@ -152,17 +167,19 @@ static int WINAPI hook_F3720(int *ctx, int received, int totalLen) {
 // The original game code does not handle WSAEWOULDBLOCK correctly, which can lead
 // to desynchronization. This hook converts WSAEWOULDBLOCK to a 0-byte receive,
 // which the game can handle gracefully.
-int WINAPI hook_recv(SOCKET s, char *buf, int len, int flags) {
+int WINAPI hook_recv(SOCKET s, char *buf, int len, int flags)
+{
     // Only intercept calls from server.dll
-    if (!IsCallerFromServer()) {
+    if (!IsCallerFromServer())
+    {
         return real_recv(s, buf, len, flags);
     }
 
-    logf("[WS2 HOOK] recv called from server.dll: socket=%u, len=%d, flags=0x%X",
-         (unsigned)s, len, flags);
+    logf("[WS2 HOOK] recv called from server.dll: socket=%u, len=%d, flags=0x%X", (unsigned)s, len, flags);
 
     // Validate parameters
-    if (!buf || len <= 0) {
+    if (!buf || len <= 0)
+    {
         logf("[WS2 HOOK] recv: Invalid parameters");
         WSASetLastError(WSAEINVAL);
         return SOCKET_ERROR;
@@ -170,9 +187,11 @@ int WINAPI hook_recv(SOCKET s, char *buf, int len, int flags) {
 
     int result = real_recv(s, buf, len, flags);
 
-    if (result == SOCKET_ERROR) {
+    if (result == SOCKET_ERROR)
+    {
         int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK) {
+        if (error == WSAEWOULDBLOCK)
+        {
             // Convert WSAEWOULDBLOCK to 0 for server.dll calls
             logf("[WS2 HOOK] recv: WSAEWOULDBLOCK converted to 0 (server.dll caller)");
             WSASetLastError(NO_ERROR);
@@ -180,9 +199,13 @@ int WINAPI hook_recv(SOCKET s, char *buf, int len, int flags) {
         }
 
         log_winsock_error("[WS2 HOOK] recv", s, error);
-    } else if (result == 0) {
+    }
+    else if (result == 0)
+    {
         logf("[WS2 HOOK] recv: Connection gracefully closed by peer on socket %u", (unsigned)s);
-    } else {
+    }
+    else
+    {
         logf("[WS2 HOOK] recv: Success, received %d bytes", result);
     }
 
@@ -193,34 +216,38 @@ int WINAPI hook_recv(SOCKET s, char *buf, int len, int flags) {
 // The original game code does not handle cases where the send buffer is full,
 // which can lead to packet loss. This hook retries the send operation until
 // all data has been sent.
-int WINAPI hook_send(SOCKET s, const char *buf, int len, int flags) {
+int WINAPI hook_send(SOCKET s, const char *buf, int len, int flags)
+{
     // Only intercept calls from server.dll
-    if (!IsCallerFromServer()) {
+    if (!IsCallerFromServer())
+    {
         return real_send(s, buf, len, flags);
     }
 
-    logf("[WS2 HOOK] send called from server.dll: socket=%u, len=%d, flags=0x%X",
-         (unsigned)s, len, flags);
+    logf("[WS2 HOOK] send called from server.dll: socket=%u, len=%d, flags=0x%X", (unsigned)s, len, flags);
 
     // Validate parameters
-    if (!buf || len <= 0) {
+    if (!buf || len <= 0)
+    {
         logf("[WS2 HOOK] send: Invalid parameters");
         WSASetLastError(WSAEINVAL);
         return SOCKET_ERROR;
     }
 
-    int total = 0;
-    int retry_count = 0;
+    int       total = 0;
+    int       retry_count = 0;
     const int MAX_RETRIES = 1000; // Prevent infinite loops
 
-    while (total < len && retry_count < MAX_RETRIES) {
+    while (total < len && retry_count < MAX_RETRIES)
+    {
         int sent = real_send(s, buf + total, len - total, flags);
 
-        if (sent == SOCKET_ERROR) {
+        if (sent == SOCKET_ERROR)
+        {
             int error = WSAGetLastError();
-            if (error == WSAEWOULDBLOCK) {
-                logf("[WS2 HOOK] send: WSAEWOULDBLOCK, retrying... (%d/%d)",
-                     retry_count + 1, MAX_RETRIES);
+            if (error == WSAEWOULDBLOCK)
+            {
+                logf("[WS2 HOOK] send: WSAEWOULDBLOCK, retrying... (%d/%d)", retry_count + 1, MAX_RETRIES);
                 Sleep(1);
                 retry_count++;
                 continue;
@@ -228,15 +255,16 @@ int WINAPI hook_send(SOCKET s, const char *buf, int len, int flags) {
 
             log_winsock_error("[WS2 HOOK] send", s, error);
             WSASetLastError(error);
-            if (error == WSAECONNRESET || error == WSAECONNABORTED) {
+            if (error == WSAECONNRESET || error == WSAECONNABORTED)
+            {
                 return total > 0 ? total : SOCKET_ERROR;
             }
             return SOCKET_ERROR;
         }
 
-        if (sent == 0) {
-            logf("[WS2 HOOK] send: Connection closed by peer after %d/%d bytes",
-                 total, len);
+        if (sent == 0)
+        {
+            logf("[WS2 HOOK] send: Connection closed by peer after %d/%d bytes", total, len);
             return total;
         }
 
@@ -244,7 +272,8 @@ int WINAPI hook_send(SOCKET s, const char *buf, int len, int flags) {
         retry_count = 0; // Reset retry counter on successful send
     }
 
-    if (retry_count >= MAX_RETRIES) {
+    if (retry_count >= MAX_RETRIES)
+    {
         logf("[WS2 HOOK] send: Max retries exceeded, sent %d/%d bytes", total, len);
         WSASetLastError(WSAETIMEDOUT);
         return total > 0 ? total : SOCKET_ERROR;
@@ -257,42 +286,45 @@ int WINAPI hook_send(SOCKET s, const char *buf, int len, int flags) {
 // Reads the server path from the "game.ini" file.
 // The path is read from the "Server" key in the "[Network]" section.
 // Returns a pointer to a static buffer containing the path, or NULL on failure.
-static const char* GetServerPathFromIni(void) {
+static const char *GetServerPathFromIni(void)
+{
     static char serverPath[MAX_PATH];
-    char iniPath[MAX_PATH];
+    char        iniPath[MAX_PATH];
 
-    if (g_hModule == NULL) {
+    if (g_hModule == NULL)
+    {
         logf("[CONFIG] Module handle is NULL.");
         return NULL;
     }
 
     // Get the path of the DLL
-    if (GetModuleFileNameA(g_hModule, iniPath, sizeof(iniPath)) == 0) {
+    if (GetModuleFileNameA(g_hModule, iniPath, sizeof(iniPath)) == 0)
+    {
         logf("[CONFIG] Failed to get module file name: %lu", GetLastError());
         return NULL;
     }
 
     // Find the last backslash and replace the filename with game.ini
     char *last_slash = strrchr(iniPath, '\\');
-    if (last_slash) {
+    if (last_slash)
+    {
         strcpy(last_slash + 1, "game.ini");
-    } else {
+    }
+    else
+    {
         logf("[CONFIG] Could not find backslash in module path: %s", iniPath);
         return NULL;
     }
 
-    DWORD len = GetPrivateProfileStringA(
-        "Network",
-        "Server",
-        "", // Default value
-        serverPath,
-        sizeof(serverPath),
-        iniPath
-    );
+    DWORD len = GetPrivateProfileStringA("Network", "Server",
+                                         "", // Default value
+                                         serverPath, sizeof(serverPath), iniPath);
 
-    if (len > 0) {
+    if (len > 0)
+    {
         // Remove quotes if present
-        if (serverPath[0] == '"' && serverPath[len - 1] == '"') {
+        if (serverPath[0] == '"' && serverPath[len - 1] == '"')
+        {
             memmove(serverPath, serverPath + 1, len - 2);
             serverPath[len - 2] = '\0';
         }
@@ -307,58 +339,75 @@ static const char* GetServerPathFromIni(void) {
 /* -------- Initialization -------- */
 
 // Creates all the hooks.
-static BOOL CreateHooks(void) {
+static BOOL CreateHooks(void)
+{
     MH_STATUS status;
-    BOOL success = true;
+    BOOL      success = true;
 
     // Get server path from game.ini or use default
     const char *serverPath = GetServerPathFromIni();
-    if (!serverPath) {
+    if (!serverPath)
+    {
         serverPath = "Server\\server.dll";
     }
 
     // Load server.dll and hook the target function
     HMODULE hServer = LoadLibraryA(serverPath);
-    if (!hServer) {
+    if (!hServer)
+    {
         DWORD error = GetLastError();
         logf("[HOOK] Failed to load %s (error: %lu)", serverPath, error);
         success = false;
-    } else {
-        logf("[HOOK] Loaded %s at %p", serverPath, (void*)hServer);
+    }
+    else
+    {
+        logf("[HOOK] Loaded %s at %p", serverPath, (void *)hServer);
 
         // Hook a specific function in server.dll that handles network packets.
-        void *addrF3720 = (void*)((uintptr_t)hServer + 0x3720);
-        status = MH_CreateHook(addrF3720, hook_F3720, (void**)&real_F3720);
-        if (status == MH_OK) {
+        void *addrF3720 = (void *)((uintptr_t)hServer + 0x3720);
+        status = MH_CreateHook(addrF3720, hook_F3720, (void **)&real_F3720);
+        if (status == MH_OK)
+        {
             logf("[HOOK] Created hook for F3720 at %p", addrF3720);
-        } else {
+        }
+        else
+        {
             logf("[HOOK] Failed to create hook for F3720: %d", (int)status);
             success = false;
         }
     }
 
     // Hook Winsock functions to add retry logic and error handling.
-    status = MH_CreateHookApi(L"ws2_32", "recv", hook_recv, (void**)&real_recv);
-    if (status == MH_OK) {
+    status = MH_CreateHookApi(L"ws2_32", "recv", hook_recv, (void **)&real_recv);
+    if (status == MH_OK)
+    {
         logf("[HOOK] Created recv hook");
-    } else {
+    }
+    else
+    {
         logf("[HOOK] Failed to create recv hook: %d", (int)status);
         success = false;
     }
 
-    status = MH_CreateHookApi(L"ws2_32", "send", hook_send, (void**)&real_send);
-    if (status == MH_OK) {
+    status = MH_CreateHookApi(L"ws2_32", "send", hook_send, (void **)&real_send);
+    if (status == MH_OK)
+    {
         logf("[HOOK] Created send hook");
-    } else {
+    }
+    else
+    {
         logf("[HOOK] Failed to create send hook: %d", (int)status);
         success = false;
     }
 
     // Hook GetTickCount to prevent timer wraparound issues.
-    status = MH_CreateHookApi(L"kernel32", "GetTickCount", hook_GetTickCount, (void**)&real_GetTickCount);
-    if (status == MH_OK) {
+    status = MH_CreateHookApi(L"kernel32", "GetTickCount", hook_GetTickCount, (void **)&real_GetTickCount);
+    if (status == MH_OK)
+    {
         logf("[HOOK] Created GetTickCount hook");
-    } else {
+    }
+    else
+    {
         logf("[HOOK] Failed to create GetTickCount hook: %d", (int)status);
         success = false;
     }
@@ -369,16 +418,17 @@ static BOOL CreateHooks(void) {
 // Initializes the hooks in a separate thread.
 // This is done to avoid potential deadlocks if the hooks are initialized
 // in DllMain.
-static DWORD WINAPI InitThread(LPVOID lpParam) {
-    logf("[HOOK] Initialization started (PID: %lu, TID: %lu)",
-         GetCurrentProcessId(), GetCurrentThreadId());
+static DWORD WINAPI InitThread(LPVOID lpParam)
+{
+    logf("[HOOK] Initialization started (PID: %lu, TID: %lu)", GetCurrentProcessId(), GetCurrentThreadId());
 
     // Initialize server.dll module range
     InitServerModuleRange();
 
     // Initialize MinHook
     MH_STATUS status = MH_Initialize();
-    if (status != MH_OK) {
+    if (status != MH_OK)
+    {
         logf("[HOOK] MH_Initialize failed: %d", (int)status);
         return 1;
     }
@@ -386,16 +436,20 @@ static DWORD WINAPI InitThread(LPVOID lpParam) {
     logf("[HOOK] MinHook initialized successfully");
 
     // Create all hooks
-    if (!CreateHooks()) {
+    if (!CreateHooks())
+    {
         logf("[HOOK] Some hooks failed to create");
     }
 
     // Enable all hooks
     status = MH_EnableHook(MH_ALL_HOOKS);
-    if (status == MH_OK) {
+    if (status == MH_OK)
+    {
         logf("[HOOK] All hooks enabled successfully");
         g_HooksInitialized = true;
-    } else {
+    }
+    else
+    {
         logf("[HOOK] Failed to enable hooks: %d", (int)status);
         return 1;
     }
@@ -409,8 +463,10 @@ static DWORD WINAPI InitThread(LPVOID lpParam) {
 }
 
 // Cleans up the hooks when the DLL is detached.
-static void CleanupHooks(void) {
-    if (!g_HooksInitialized) {
+static void CleanupHooks(void)
+{
+    if (!g_HooksInitialized)
+    {
         return;
     }
 
@@ -419,50 +475,55 @@ static void CleanupHooks(void) {
     MH_STATUS disableStatus = MH_DisableHook(MH_ALL_HOOKS);
     MH_STATUS uninitStatus = MH_Uninitialize();
 
-    logf("[HOOK] Cleanup completed (Disable: %d, Uninit: %d)",
-         (int)disableStatus, (int)uninitStatus);
+    logf("[HOOK] Cleanup completed (Disable: %d, Uninit: %d)", (int)disableStatus, (int)uninitStatus);
 
     g_HooksInitialized = false;
 }
 
 /* -------- DLL Entry Point -------- */
 
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved) {
-    switch (dwReason) {
-        case DLL_PROCESS_ATTACH:
-            g_hModule = hModule;
-            // Disable thread library calls for performance.
-            DisableThreadLibraryCalls(hModule);
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
+{
+    switch (dwReason)
+    {
+    case DLL_PROCESS_ATTACH:
+        g_hModule = hModule;
+        // Disable thread library calls for performance.
+        DisableThreadLibraryCalls(hModule);
 
-            if (!init_logging(hModule)) {
-                OutputDebugStringA("[HOOK] Failed to initialize logging. Aborting attach.\n");
-                return FALSE;
-            }
+        if (!init_logging(hModule))
+        {
+            OutputDebugStringA("[HOOK] Failed to initialize logging. Aborting attach.\n");
+            return FALSE;
+        }
 
-            // Create a new thread to initialize the hooks.
-            // This is done to avoid potential deadlocks inside DllMain.
-            HANDLE hThread = CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
-            if (hThread) {
-                CloseHandle(hThread);
-            } else {
-                logf("[HOOK] Failed to create initialization thread");
-                close_logging();
-                return FALSE;
-            }
-            break;
-
-        case DLL_PROCESS_DETACH:
-            logf("[HOOK] DLL detaching from process");
-
-            CleanupHooks();
-
+        // Create a new thread to initialize the hooks.
+        // This is done to avoid potential deadlocks inside DllMain.
+        HANDLE hThread = CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
+        if (hThread)
+        {
+            CloseHandle(hThread);
+        }
+        else
+        {
+            logf("[HOOK] Failed to create initialization thread");
             close_logging();
-            break;
+            return FALSE;
+        }
+        break;
 
-        case DLL_THREAD_ATTACH:
-        case DLL_THREAD_DETACH:
-            // Nothing to do for thread attach/detach
-            break;
+    case DLL_PROCESS_DETACH:
+        logf("[HOOK] DLL detaching from process");
+
+        CleanupHooks();
+
+        close_logging();
+        break;
+
+    case DLL_THREAD_ATTACH:
+    case DLL_THREAD_DETACH:
+        // Nothing to do for thread attach/detach
+        break;
     }
 
     return TRUE;
