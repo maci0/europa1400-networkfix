@@ -114,9 +114,6 @@ DWORD WINAPI hook_GetTickCount(void) {
 // This function is a handler for a specific packet type in the game's network code.
 // It is hooked to fix a bug where a negative value can be assigned to a field
 // in the packet context, causing instability.
-// This function is a handler for a specific packet type in the game's network code.
-// It is hooked to fix a bug where a negative value can be assigned to a field
-// in the packet context, causing instability.
 static int WINAPI hook_F3720(int *ctx, int received, int totalLen) {
     // Validate parameters
     if (!ctx) {

@@ -21,21 +21,21 @@ static const DWORD kMaxLogLines = 500;  // Max lines before rollover
 // Resets the log file by truncating it to zero length.
 // This is called when the log file exceeds the maximum number of lines.
 static void ResetLogFile(void) {
-    if (g_LoggingContext.g_LogFile != INVALID_HANDLE_VALUE) {
-        SetFilePointer(g_LoggingContext.g_LogFile, 0, NULL, FILE_BEGIN);
-        SetEndOfFile(g_LoggingContext.g_LogFile);
-        g_LoggingContext.g_LogLineCount = 0;
+    if (g_LoggingContext.LogFile != INVALID_HANDLE_VALUE) {
+        SetFilePointer(g_LoggingContext.LogFile, 0, NULL, FILE_BEGIN);
+        SetEndOfFile(g_LoggingContext.LogFile);
+        g_LoggingContext.LogLineCount = 0;
     }
 }
 
 // Writes a formatted string to the log file.
 // This function is thread-safe.
 void logf(const char *fmt, ...) {
-    if (!g_LoggingContext.g_CriticalSectionInitialized || g_LoggingContext.g_LogFile == INVALID_HANDLE_VALUE) return;
+    if (!g_LoggingContext.CriticalSectionInitialized || g_LoggingContext.LogFile == INVALID_HANDLE_VALUE) return;
 
-    EnterCriticalSection(&g_LoggingContext.g_LogCriticalSection);
+    EnterCriticalSection(&g_LoggingContext.LogCriticalSection);
 
-    if (++g_LoggingContext.g_LogLineCount > kMaxLogLines) {
+    if (++g_LoggingContext.LogLineCount > kMaxLogLines) {
         ResetLogFile();
     }
 
@@ -62,11 +62,11 @@ void logf(const char *fmt, ...) {
         }
 
         DWORD written;
-        WriteFile(g_LoggingContext.g_LogFile, buffer, timestamp_len + len, &written, NULL);
-        FlushFileBuffers(g_LoggingContext.g_LogFile);
+        WriteFile(g_LoggingContext.LogFile, buffer, timestamp_len + len, &written, NULL);
+        FlushFileBuffers(g_LoggingContext.LogFile);
     }
 
-    LeaveCriticalSection(&g_LoggingContext.g_LogCriticalSection);
+    LeaveCriticalSection(&g_LoggingContext.LogCriticalSection);
 }
 
 
@@ -106,15 +106,15 @@ void log_winsock_error(const char *prefix, SOCKET s, int error) {
 }
 
 bool init_logging(HMODULE hModule) {
-    InitializeCriticalSection(&g_LoggingContext.g_LogCriticalSection);
-    g_LoggingContext.g_CriticalSectionInitialized = true;
+    InitializeCriticalSection(&g_LoggingContext.LogCriticalSection);
+    g_LoggingContext.CriticalSectionInitialized = true;
 
     wchar_t dllPath[MAX_PATH];
     GetModuleFileNameW(hModule, dllPath, MAX_PATH);
     PathRemoveFileSpecW(dllPath);
     wcscat_s(dllPath, MAX_PATH, L"\\hook_log.txt");
 
-    g_LoggingContext.g_LogFile = CreateFileW(
+    g_LoggingContext.LogFile = CreateFileW(
         dllPath,
         GENERIC_WRITE,
         FILE_SHARE_READ,
@@ -124,24 +124,24 @@ bool init_logging(HMODULE hModule) {
         NULL
     );
 
-    if (g_LoggingContext.g_LogFile == INVALID_HANDLE_VALUE) {
+    if (g_LoggingContext.LogFile == INVALID_HANDLE_VALUE) {
         return false;
     }
 
-    SetFilePointer(g_LoggingContext.g_LogFile, 0, NULL, FILE_END);
+    SetFilePointer(g_LoggingContext.LogFile, 0, NULL, FILE_END);
     logf("[HOOK] DLL attached to process %lu, log: %ls", GetCurrentProcessId(), dllPath);
     return true;
 }
 
 void close_logging(void) {
-    if (g_LoggingContext.g_LogFile != INVALID_HANDLE_VALUE) {
-        CloseHandle(g_LoggingContext.g_LogFile);
-        g_LoggingContext.g_LogFile = INVALID_HANDLE_VALUE;
+    if (g_LoggingContext.LogFile != INVALID_HANDLE_VALUE) {
+        CloseHandle(g_LoggingContext.LogFile);
+        g_LoggingContext.LogFile = INVALID_HANDLE_VALUE;
     }
 
-    if (g_LoggingContext.g_CriticalSectionInitialized) {
-        DeleteCriticalSection(&g_LoggingContext.g_LogCriticalSection);
-        g_LoggingContext.g_CriticalSectionInitialized = false;
+    if (g_LoggingContext.CriticalSectionInitialized) {
+        DeleteCriticalSection(&g_LoggingContext.LogCriticalSection);
+        g_LoggingContext.CriticalSectionInitialized = false;
     }
 }
 
