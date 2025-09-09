@@ -45,14 +45,14 @@ static BOOL InitServerModuleRange(void)
 {
     if (g_ServerBase != 0)
     {
-        return false;
+        return TRUE; // Changed from false to TRUE
     }
 
     HMODULE hServer = GetModuleHandleA("server.dll");
     if (!hServer)
     {
         logf("[HOOK] server.dll not found in process");
-        return false;
+        return FALSE;
     }
 
     MODULEINFO mi = {0};
@@ -61,12 +61,12 @@ static BOOL InitServerModuleRange(void)
         g_ServerBase = (uintptr_t)mi.lpBaseOfDll;
         g_ServerSize = (size_t)mi.SizeOfImage;
         logf("[HOOK] server.dll mapped at %p, size: 0x%zx", (void *)g_ServerBase, g_ServerSize);
-        return true;
+        return TRUE;
     }
     else
     {
         logf("[HOOK] Failed to get server.dll module info: %lu", GetLastError());
-        return false;
+        return FALSE;
     }
 }
 
@@ -75,31 +75,54 @@ static BOOL InitServerModuleRange(void)
 // Note: This method is not 100% reliable, as it's possible for non-server
 // functions to be located within the server's module range. A more robust
 // solution would be to use stack walking, but that is significantly more complex.
-static BOOL IsCallerFromServer(void)
+static BOOL IsCallerFromServer(uintptr_t caller_addr)
 {
     if (g_ServerBase == 0)
     {
         InitServerModuleRange();
         if (g_ServerBase == 0)
         {
+            logf("[HOOK] DEBUG: g_ServerBase is still 0 after init");
             return FALSE;
         }
     }
 
-    CONTEXT ctx = {0};
-    ctx.ContextFlags = CONTEXT_CONTROL;
-    RtlCaptureContext(&ctx);
+    // Always log the caller address for debugging
+    // logf("[HOOK] DEBUG: Caller address: 0x%p, ServerBase: 0x%p, ServerSize: 0x%zx", (void *)caller_addr, (void
+    // *)g_ServerBase, g_ServerSize);
 
-    uintptr_t callerAddr = ctx.Eip;
-    // uintptr_t callerAddr = (uintptr_t)CALLER_IP();
+    // Log the range we're checking against
+    // logf("[HOOK] DEBUG: Server range: 0x%p - 0x%p", (void *)g_ServerBase, (void *)(g_ServerBase +
+    // g_ServerSize));
 
-    BOOL inRange = (callerAddr >= g_ServerBase && callerAddr < g_ServerBase + g_ServerSize);
+    BOOL inRange = (caller_addr >= g_ServerBase && caller_addr < g_ServerBase + g_ServerSize);
 
+    /*
     if (inRange)
     {
-        logf("[HOOK] Caller from server.dll: 0x%p (offset +0x%zx)", (void *)callerAddr,
-             (size_t)(callerAddr - g_ServerBase));
+        logf("[HOOK] Caller from server.dll: 0x%p (offset +0x%zx)", (void *)caller_addr,
+             (size_t)(caller_addr - g_ServerBase));
     }
+    else
+    {
+        logf("[HOOK] DEBUG: Caller NOT from server.dll: 0x%p", (void *)caller_addr);
+
+        // Try to identify which module the caller is from
+        HMODULE hModule;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)caller_addr, &hModule))
+        {
+            char moduleName[MAX_PATH];
+            if (GetModuleFileNameA(hModule, moduleName, sizeof(moduleName)))
+            {
+                // Extract just the filename
+                char *fileName = strrchr(moduleName, '\\');
+                fileName = fileName ? fileName + 1 : moduleName;
+                logf("[HOOK] DEBUG: Caller is from module: %s", fileName);
+            }
+        }
+    }
+        */
 
     return inRange;
 }
@@ -173,13 +196,14 @@ static int WINAPI hook_F3720(int *ctx, int received, int totalLen)
 // which the game can handle gracefully.
 static int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
 {
-    // Only intercept calls from server.dll
-    if (!IsCallerFromServer())
+    // Get caller address and check if it's from server.dll
+    uintptr_t caller = (uintptr_t)CALLER_IP();
+    if (!IsCallerFromServer(caller))
     {
         return real_recv(s, buf, len, flags);
     }
 
-    logf("[WS2 HOOK] recv called from server.dll: socket=%u, len=%d, flags=0x%X", (unsigned)s, len, flags);
+    // logf("[WS2 HOOK] recv called from server.dll: socket=%u, len=%d, flags=0x%X", (unsigned)s, len, flags);
 
     // Validate parameters
     if (!buf || len <= 0)
@@ -222,8 +246,9 @@ static int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
 // all data has been sent.
 static int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 {
-    // Only intercept calls from server.dll
-    if (!IsCallerFromServer())
+    // Get caller address and check if it's from server.dll
+    uintptr_t caller = (uintptr_t)CALLER_IP();
+    if (!IsCallerFromServer(caller))
     {
         return real_send(s, buf, len, flags);
     }

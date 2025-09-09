@@ -16,7 +16,7 @@
 
 logging_context       g_logctx = {0};
 
-static const uint32_t max_log_lines = 500u; /* Max lines before rollover */
+static const uint32_t max_log_lines = 50000u; /* Max lines before rollover */
 
 // Resets the log file by truncating it to zero length.
 // This is called when the log file exceeds the maximum number of lines.
