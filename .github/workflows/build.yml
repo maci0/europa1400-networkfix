@@ -27,10 +27,12 @@ jobs:
         with:
           version: 0.15.1
 
-      - name: Install lld (provides lld-link)
+      - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y lld llvm clang
+          sudo apt-get install -y lld mingw-w64
+          # Symlink to guarantee Zig finds ld.lld
+          sudo ln -sf $(command -v ld.lld) /usr/local/bin/lld-link
 
       - name: Build asi
         run: make clean && make
