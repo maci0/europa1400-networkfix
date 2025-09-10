@@ -22,6 +22,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Ensure lld-link exists
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lld
+          # Point lld-link to ld.lld
+          sudo ln -sf $(command -v ld.lld) /usr/local/bin/lld-link
+
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
         with:
