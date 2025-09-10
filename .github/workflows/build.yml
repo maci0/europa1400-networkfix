@@ -30,9 +30,7 @@ jobs:
       - name: Install lld (provides lld-link)
         run: |
           sudo apt-get update
-          sudo apt-get install -y lld
-          sudo ln -sf /usr/bin/lld-link-18 /usr/local/bin/lld-link
-
+          sudo apt-get install -y lld llvm clang
 
       - name: Build asi
         run: make clean && make
