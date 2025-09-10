@@ -27,8 +27,8 @@ jobs:
         with:
           version: 0.15.1
 
-      - name: Build DLLs and injector
-        run: make
+      - name: Build asi
+        run: make clean && make
 
       - name: Upload build artifacts
         if: always()
