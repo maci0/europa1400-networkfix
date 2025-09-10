@@ -3,5 +3,6 @@
 *.asi
 *.lib
 *.pdb
+*.exe
 bin/*
 .env
