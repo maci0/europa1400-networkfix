@@ -56,7 +56,67 @@ This fix is for the Gold Edition of *Europa 1400: The Guild*.
 
 ## Troubleshooting
 
-If you are experiencing issues, please check the `hook_log.txt` file in your game directory for any error messages. You can also create an issue on the [GitHub repository](https://github.com/maci0/europa1400-networkfix/issues).
+### Common Issues
+
+#### Plugin Not Loading
+- **Symptoms:** No `hook_log.txt` file appears in game directory
+- **Solutions:**
+  - Ensure you're using Europa 1400 Gold Edition (not the original version)
+  - Verify `networkfix.asi` is in the same directory as `Europa1400Gold_TL.exe`
+  - Check Windows didn't block the file: Right-click → Properties → Unblock
+
+#### Connection Still Failing
+- **Symptoms:** "Out of sync" errors persist, disconnections continue
+- **Solutions:**
+  - Check `hook_log.txt` for error messages like "Failed to load server.dll"
+  - Verify your `game.ini` has correct server path in `[Network]` section
+  - Try the debug version: `make debug` and use `networkfix-debug.asi`
+
+#### Hook Creation Failures  
+- **Symptoms:** Log shows "Failed to create hook" messages
+- **Solutions:**
+  - Ensure no antivirus is blocking the plugin
+  - Run game as administrator
+  - Check server.dll is the expected version (RVA 0x3720 exists)
+
+#### Log File Issues
+- **Symptoms:** No logging or partial logs
+- **Solutions:**
+  - Check directory permissions - plugin needs write access
+  - Look for Windows Event Viewer entries if initialization fails
+  - Ensure game directory isn't read-only
+
+### Log Analysis
+
+The `hook_log.txt` file contains detailed information:
+- `[HOOK]` messages show initialization and hook creation status  
+- `[WS2 HOOK]` messages indicate network function interception
+- `[SERVER HOOK]` messages show server.dll function patches
+- `[CONFIG]` messages relate to game.ini parsing
+
+### Advanced Diagnostics
+
+For deeper investigation:
+1. Use debug build: `make debug` 
+2. Enable additional logging by uncommenting debug lines in source
+3. Use Process Monitor to watch file/registry access
+4. Check with Dependency Walker if server.dll loads correctly
+
+### Getting Help
+
+If issues persist, please create an issue on the [GitHub repository](https://github.com/maci0/europa1400-networkfix/issues) with:
+- Your `hook_log.txt` file contents
+- Game version and installation path  
+- Network configuration (VPN type, etc.)
+- Steps to reproduce the problem
+
+## Testing TODO
+
+- **Steam Version Testing**: Verify network stability improvements work correctly with Steam version (RVA 0x3720)
+- **GOG Version Testing**: Confirm GOG version compatibility and network fixes (RVA 0x3960) 
+- **VPN Testing**: Test multiplayer sessions over VPNs (Hamachi, Radmin) to verify packet loss resilience
+- **Connection Recovery**: Test network interruption recovery and retry logic functionality
+- **Performance Impact**: Measure any performance impact from the network hooks during gameplay
 
 ## Contributing
 

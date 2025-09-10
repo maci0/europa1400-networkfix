@@ -14,9 +14,12 @@
 
 #include "logging.h"
 
-logging_context       g_logctx = {0};
+logging_context g_logctx = {0};
 
-static const uint32_t max_log_lines = 50000u; /* Max lines before rollover */
+// Logging constants
+static const uint32_t MAX_LOG_LINES = 50000u;     /* Max lines before rollover */
+static const size_t   LOG_BUFFER_SIZE = 2048;     /* Log message buffer size */
+static const size_t   TIMESTAMP_BUFFER_SIZE = 64; /* Timestamp buffer size */
 
 // Resets the log file by truncating it to zero length.
 // This is called when the log file exceeds the maximum number of lines.
@@ -41,37 +44,61 @@ void logf(const char *fmt, ...)
 
     EnterCriticalSection(&g_logctx.critical_section);
 
-    if (++g_logctx.log_line_count > max_log_lines)
+    if (++g_logctx.log_line_count > MAX_LOG_LINES)
     {
         reset_log_file();
     }
 
     SYSTEMTIME st;
     GetLocalTime(&st);
-    char timestamp[64];
+    char timestamp[TIMESTAMP_BUFFER_SIZE];
     int  timestamp_len = snprintf(timestamp, sizeof(timestamp), "[%04d-%02d-%02d %02d:%02d:%02d.%03d] ", st.wYear,
                                   st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
 
-    char buffer[1024];
+    // Validate timestamp length
+    if (timestamp_len < 0 || timestamp_len >= (int)sizeof(timestamp))
+    {
+        return; // Timestamp formatting failed
+    }
+
+    char buffer[LOG_BUFFER_SIZE];
+    // Bounds-checked copy of timestamp
+    if (timestamp_len >= (int)sizeof(buffer))
+    {
+        return; // Timestamp too long for buffer
+    }
     memcpy(buffer, timestamp, timestamp_len);
 
     va_list ap;
     va_start(ap, fmt);
-    int len = vsnprintf(buffer + timestamp_len, sizeof(buffer) - timestamp_len, fmt, ap);
+    int remaining_space = (int)sizeof(buffer) - timestamp_len;
+    int len = vsnprintf(buffer + timestamp_len, remaining_space, fmt, ap);
     va_end(ap);
+
+    // Handle vsnprintf return value correctly
+    if (len < 0)
+    {
+        return; // Formatting error
+    }
+    if (len >= remaining_space)
+    {
+        len = remaining_space - 1; // Truncated
+    }
 
     if (len > 0)
     {
-        if (buffer[timestamp_len + len - 1] != '\n')
+        // Check if we need to add newline and have space for it
+        int total_len = timestamp_len + len;
+        if (buffer[total_len - 1] != '\n' && total_len < (int)sizeof(buffer) - 1)
         {
-            buffer[timestamp_len + len] = '\n';
-            buffer[timestamp_len + len + 1] = '\0';
+            buffer[total_len] = '\n';
+            buffer[total_len + 1] = '\0';
             len++;
         }
 
         DWORD written;
         WriteFile(g_logctx.log_file, buffer, timestamp_len + len, &written, NULL);
-        FlushFileBuffers(g_logctx.log_file);
+        // Removed FlushFileBuffers for better performance
     }
 
     LeaveCriticalSection(&g_logctx.critical_section);
@@ -112,6 +139,28 @@ void log_winsock_error(const char *prefix, SOCKET s, int error)
     }
 }
 
+void log_socket_buffer_info(SOCKET s)
+{
+    static SOCKET last_logged_socket = INVALID_SOCKET;
+
+    if (s == last_logged_socket)
+    {
+        return;
+    }
+
+    // Get socket buffer sizes
+    int recv_buf_size = -1;
+    int send_buf_size = -1;
+    int opt_len = sizeof(int);
+
+    getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&recv_buf_size, &opt_len);
+    opt_len = sizeof(int);
+    getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&send_buf_size, &opt_len);
+
+    logf("[WS2 HOOK] Socket %u: recv_buf=%d, send_buf=%d", (unsigned)s, recv_buf_size, send_buf_size);
+    last_logged_socket = s;
+}
+
 bool init_logging(HMODULE hModule)
 {
     InitializeCriticalSection(&g_logctx.critical_section);
@@ -139,6 +188,8 @@ void close_logging(void)
 {
     if (g_logctx.log_file != INVALID_HANDLE_VALUE)
     {
+        // Flush any remaining data before closing
+        FlushFileBuffers(g_logctx.log_file);
         CloseHandle(g_logctx.log_file);
         g_logctx.log_file = INVALID_HANDLE_VALUE;
     }

@@ -20,5 +20,6 @@ bool                   init_logging(HMODULE hModule);
 void                   close_logging(void);
 void                   logf(const char *fmt, ...);
 void                   log_winsock_error(const char *prefix, SOCKET s, int error);
+void                   log_socket_buffer_info(SOCKET s);
 
 #endif // LOGGING_H
