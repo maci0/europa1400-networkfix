@@ -13,6 +13,7 @@
 #include "sha256.h"
 #include "versions.h"
 #include <psapi.h>
+#include <shlwapi.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -37,11 +38,9 @@
 #define SEND_RETRY_DELAY_MS 1 // Delay between send retries in milliseconds
 
 // Global state
-static BOOL      g_HooksInitialized = false;
-static uintptr_t g_ServerBase = 0;
-static size_t    g_ServerSize = 0;
-static DWORD     g_server_rva = 0;
-static HMODULE   g_hServerDll = NULL;
+static BOOL    g_HooksInitialized = false;
+static DWORD   g_server_rva = 0;
+static HMODULE g_hServerDll = NULL;
 
 // Original function pointers
 static int(WSAAPI *real_recv)(SOCKET, char *, int, int) = NULL;
@@ -54,9 +53,9 @@ static srv_gameStreamReader_t real_srv_gameStreamReader = NULL;
 
 /**
  * Detect server.dll version by calculating its SHA256 hash.
- * Infers the path from the module handle and returns the RVA offset.
+ * Gets the module path and returns the RVA offset using pattern matching.
  *
- * @return RVA offset for the target function, or 0 if unknown version
+ * @return RVA offset for the target function, or 0 if pattern matching fails
  */
 static DWORD detect_server_version()
 {
@@ -84,7 +83,7 @@ static DWORD detect_server_version()
 
     logf("[HOOK] server.dll SHA256: %s", fileHash);
 
-    // Look up version in known list
+    // SHA256-based version lookup is currently disabled - using pattern matching instead
     DWORD checksum_rva = 0;
     /*for (int i = 0; known_versions[i].sha256_hash != NULL; i++)
     {
@@ -97,11 +96,11 @@ static DWORD detect_server_version()
         }
     }*/
 
-    // Test pattern matching functionality (for testing only - not used yet)
+    // Use pattern matching to find srv_gameStreamReader function
     DWORD                pattern_rva = 0;
     PATTERN_MATCH_RESULT result = find_srv_gameStreamReader_by_pattern(g_hServerDll, &pattern_rva);
 
-    logf("[HOOK] Pattern matching test: %s", pattern_match_result_to_string(result));
+    logf("[HOOK] Pattern matching result: %s", pattern_match_result_to_string(result));
     if (result == PATTERN_MATCH_SUCCESS)
     {
         logf("[HOOK] Pattern matcher found srv_gameStreamReader at RVA: 0x%X", pattern_rva);
@@ -143,27 +142,7 @@ static void reset_server_globals(void)
         FreeLibrary(g_hServerDll);
         g_hServerDll = NULL;
     }
-    g_ServerBase = 0;
-    g_ServerSize = 0;
     g_server_rva = 0;
-}
-
-/**
- * Gets module information for a loaded module.
- * Common pattern helper to reduce code duplication.
- *
- * @param hModule Module handle
- * @param mi Pointer to MODULEINFO structure to fill
- * @return TRUE if successful, FALSE otherwise
- */
-static BOOL get_module_info(HMODULE hModule, MODULEINFO *mi)
-{
-    if (!GetModuleInformation(GetCurrentProcess(), hModule, mi, sizeof(*mi)))
-    {
-        logf("[HOOK] Failed to get module info: %lu", GetLastError());
-        return FALSE;
-    }
-    return TRUE;
 }
 
 /**
@@ -199,26 +178,6 @@ static BOOL validate_winsock_params(const void *buf, int len)
 }
 
 /**
- * Checks if caller is from server.dll and sets up logging.
- * Common pattern for both recv/send hooks.
- *
- * @param s Socket handle for logging setup
- * @return TRUE if caller is from server.dll, FALSE otherwise
- */
-static BOOL check_server_caller(SOCKET s)
-{
-    uintptr_t caller = (uintptr_t)CALLER_IP();
-    if (!is_caller_from_server(caller))
-    {
-        return FALSE;
-    }
-
-    // Log socket buffer info on first use from server.dll
-    log_socket_buffer_info(s);
-    return TRUE;
-}
-
-/**
  * Loads server.dll from the configured path.
  *
  * @param serverPath Path to server.dll to load
@@ -240,44 +199,6 @@ static BOOL load_server_dll(const char *serverPath)
 }
 
 /**
- * Validates and sets up server module information.
- * Gets base address, size, and performs basic validation.
- *
- * @return TRUE if validation successful, FALSE on error
- */
-static BOOL validate_server_module(void)
-{
-    MODULEINFO mi = {0};
-    if (!get_module_info(g_hServerDll, &mi))
-    {
-        reset_server_globals();
-        return FALSE;
-    }
-
-    g_ServerBase = (uintptr_t)mi.lpBaseOfDll;
-    g_ServerSize = (size_t)mi.SizeOfImage;
-    logf("[HOOK] server.dll mapped at %p, size: 0x%zx", (void *)g_ServerBase, g_ServerSize);
-
-    // Basic validation: check if module size is reasonable for server.dll
-    if (mi.SizeOfImage < 0x1000) // Minimum 4KB
-    {
-        logf("[HOOK] Warning: server.dll seems too small (0x%X bytes)", mi.SizeOfImage);
-    }
-
-    return TRUE;
-}
-
-/**
- * Detects server version and sets up RVA information.
- * Uses the global server handle to infer version information.
- *
- * @return TRUE if version detected successfully, FALSE on error
- */
-static BOOL detect_server_version_info(void)
-{
-}
-
-/**
  * Initializes the server.dll module completely: loads library, detects version,
  * and sets up module range information.
  *
@@ -287,7 +208,7 @@ static BOOL detect_server_version_info(void)
  */
 static BOOL init_server_module(void)
 {
-    if (g_hServerDll != NULL && g_ServerBase != 0 && g_server_rva != 0)
+    if (g_hServerDll != NULL && g_server_rva != 0)
     {
         return TRUE; // Already fully initialized
     }
@@ -301,7 +222,7 @@ static BOOL init_server_module(void)
     }
 
     // Load, validate, and detect version
-    if (!load_server_dll(serverPath) || !validate_server_module() || !detect_server_version())
+    if (!load_server_dll(serverPath) || (g_server_rva = detect_server_version()) == 0)
     {
         reset_server_globals();
         return FALSE;
@@ -317,19 +238,42 @@ static BOOL init_server_module(void)
  * Note: This method uses address range checking which is not 100% reliable.
  * A more robust solution would use stack walking but is significantly more complex.
  *
- * @param caller_addr The return address of the calling function
+ * @param s Socket handle for logging setup
  * @return TRUE if caller is from server.dll, FALSE otherwise
  */
-BOOL is_caller_from_server(uintptr_t caller_addr)
+BOOL is_caller_from_server(SOCKET s, uintptr_t caller_addr)
 {
-    if (g_ServerBase == 0)
+    //    uintptr_t caller_addr = (uintptr_t)CALLER_IP();
+
+    // Log socket buffer info on first use from server.dll
+    // log_socket_buffer_info(s);
+
+    if (!g_hServerDll)
     {
-        logf("[HOOK] DEBUG: g_ServerBase is 0 - server module not initialized");
+        logf("[HOOK] DEBUG: g_hServerDll is 0 - server module not initialized");
         return FALSE;
     }
 
-    BOOL inRange = (caller_addr >= g_ServerBase && caller_addr < g_ServerBase + g_ServerSize);
-    return inRange;
+    static HMODULE hModule = NULL;
+
+    // logf("[HOOK] DEBUG: g_hServerDll=0x%p", g_hServerDll);
+
+    // Get the module handle for the given address
+    if (!GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)caller_addr, &hModule))
+    {
+        DWORD error = GetLastError();
+        logf("[HOOK] DEBUG: GetModuleHandleEx failed for addr 0x%p, error=%lu", (void *)caller_addr, error);
+        return FALSE;
+    }
+
+    // logf("[HOOK] DEBUG: GetModuleHandleEx returned hModule=0x%p for addr 0x%p", hModule, (void *)caller_addr);
+    // logf("[HOOK] DEBUG: Comparing hModule=0x%p with g_hServerDll=0x%p", hModule, g_hServerDll);
+
+    // Compare with the known server module handle
+    BOOL result = (hModule == g_hServerDll);
+    // logf("[HOOK] DEBUG: is_caller_from_server returning %s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 /**
@@ -415,7 +359,8 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
 int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
 {
     // Check if caller is from server.dll and set up logging
-    if (!check_server_caller(s))
+
+    if (!is_caller_from_server(s, (uintptr_t)CALLER_IP()))
     {
         return real_recv(s, buf, len, flags);
     }
@@ -475,12 +420,12 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
 int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 {
     // Check if caller is from server.dll and set up logging
-    if (!check_server_caller(s))
+    if (!is_caller_from_server(s, (uintptr_t)CALLER_IP()))
     {
         return real_send(s, buf, len, flags);
     }
 
-    logf("[WS2 HOOK] send called from server.dll: socket=%u, len=%d, flags=0x%X", (unsigned)s, len, flags);
+    logf("[WS2 HOOK] send: called from server.dll: socket=%u, len=%d, flags=0x%X", (unsigned)s, len, flags);
 
     // Validate parameters
     if (!validate_winsock_params(buf, len))
@@ -564,15 +509,16 @@ const char *get_server_path_from_ini(HMODULE hModule)
         return NULL;
     }
 
-    // Find the last backslash and replace the filename with game.ini
-    char *last_slash = strrchr(iniPath, '\\');
-    if (last_slash)
+    // Remove filename and append game.ini using Path API
+    if (!PathRemoveFileSpecA(iniPath))
     {
-        strcpy(last_slash + 1, "game.ini");
+        logf("[CONFIG] Could not remove file spec from module path: %s", iniPath);
+        return NULL;
     }
-    else
+
+    if (!PathCombineA(iniPath, iniPath, "game.ini"))
     {
-        logf("[CONFIG] Could not find backslash in module path: %s", iniPath);
+        logf("[CONFIG] Could not combine path with game.ini");
         return NULL;
     }
 

@@ -100,7 +100,7 @@ void logf(const char *fmt, ...)
         WriteFile(g_logctx.log_file, buffer, timestamp_len + len, &written, NULL);
         // Removed FlushFileBuffers for better performance
     }
-
+    FlushFileBuffers(g_logctx.log_file);
     LeaveCriticalSection(&g_logctx.critical_section);
 }
 

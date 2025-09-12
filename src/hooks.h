@@ -12,7 +12,7 @@ void cleanup_hooks(void);
 
 // Server module range detection
 BOOL init_server_module_range(void);
-BOOL is_caller_from_server(uintptr_t caller_addr);
+BOOL is_caller_from_server(SOCKET s, uintptr_t caller_addr);
 
 // Hook implementations
 int WSAAPI   hook_recv(SOCKET s, char *buf, int len, int flags);
