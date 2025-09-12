@@ -2,7 +2,7 @@ ZIG ?= zig
 TARGET := bin/networkfix.asi
 DEBUG_TARGET := bin/networkfix-debug.asi
 MINHOOK_DIR := vendor/minhook
-SRCS := src/main.c src/hooks.c src/logging.c src/sha256.c \
+SRCS := src/main.c src/hooks.c src/logging.c src/sha256.c src/pattern_matcher.c \
 $(MINHOOK_DIR)/src/buffer.c \
 $(MINHOOK_DIR)/src/hde/hde32.c \
 $(MINHOOK_DIR)/src/hde/hde64.c \
