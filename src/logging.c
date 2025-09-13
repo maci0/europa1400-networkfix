@@ -99,8 +99,8 @@ void logf(const char *fmt, ...)
         DWORD written;
         WriteFile(g_logctx.log_file, buffer, timestamp_len + len, &written, NULL);
         // Removed FlushFileBuffers for better performance
+        // FlushFileBuffers(g_logctx.log_file);
     }
-    FlushFileBuffers(g_logctx.log_file);
     LeaveCriticalSection(&g_logctx.critical_section);
 }
 
@@ -199,4 +199,68 @@ void close_logging(void)
         DeleteCriticalSection(&g_logctx.critical_section);
         g_logctx.critical_section_initialized = false;
     }
+}
+
+/**
+ * Rate-limited logging function to prevent spam.
+ * Only logs a message if it hasn't been logged recently.
+ */
+void logf_rate_limited(const char *key, const char *fmt, ...)
+{
+    static struct
+    {
+        char  key[64];
+        DWORD last_logged;
+    } rate_limit_cache[10] = {0};
+
+    DWORD current_time = GetTickCount();
+    int   cache_slot = -1;
+
+    // Find existing entry or empty slot
+    for (int i = 0; i < 10; i++)
+    {
+        if (strcmp(rate_limit_cache[i].key, key) == 0)
+        {
+            cache_slot = i;
+            break;
+        }
+        if (cache_slot == -1 && rate_limit_cache[i].key[0] == '\0')
+        {
+            cache_slot = i;
+        }
+    }
+
+    // Use oldest entry if no empty slot found
+    if (cache_slot == -1)
+    {
+        cache_slot = 0;
+        DWORD oldest_time = rate_limit_cache[0].last_logged;
+        for (int i = 1; i < 10; i++)
+        {
+            if (rate_limit_cache[i].last_logged < oldest_time)
+            {
+                oldest_time = rate_limit_cache[i].last_logged;
+                cache_slot = i;
+            }
+        }
+    }
+
+    // Check if enough time has passed
+    if (current_time - rate_limit_cache[cache_slot].last_logged < LOG_RATE_LIMIT_MS)
+    {
+        return; // Skip logging
+    }
+
+    // Update cache and log message
+    strncpy(rate_limit_cache[cache_slot].key, key, sizeof(rate_limit_cache[cache_slot].key) - 1);
+    rate_limit_cache[cache_slot].key[sizeof(rate_limit_cache[cache_slot].key) - 1] = '\0';
+    rate_limit_cache[cache_slot].last_logged = current_time;
+
+    va_list ap;
+    va_start(ap, fmt);
+    char buffer[512];
+    vsnprintf(buffer, sizeof(buffer), fmt, ap);
+    va_end(ap);
+
+    logf("%s", buffer);
 }
