@@ -224,7 +224,7 @@ static BOOL init_server_module(void)
     // Load, validate, and detect version
     if (!load_server_dll(serverPath) || (g_server_rva = detect_server_version()) == 0)
     {
-        reset_server_globals();
+        // reset_server_globals();
         return FALSE;
     }
 
@@ -250,11 +250,11 @@ BOOL is_caller_from_server(SOCKET s, uintptr_t caller_addr)
 
     if (!g_hServerDll)
     {
-        logf("[HOOK] DEBUG: g_hServerDll is 0 - server module not initialized");
+        logf_rate_limited("server_not_init", "[HOOK] DEBUG: g_hServerDll is 0 - server module not initialized");
         return FALSE;
     }
 
-    static HMODULE hModule = NULL;
+    HMODULE hModule = NULL;
 
     // logf("[HOOK] DEBUG: g_hServerDll=0x%p", g_hServerDll);
 
@@ -378,15 +378,16 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
         int error = WSAGetLastError();
         if (error == WSAEWOULDBLOCK)
         {
-            // Show buffer state when WSAEWOULDBLOCK occurs
+            // Show buffer state when WSAEWOULDBLOCK occurs (rate limited)
             int available = get_available_bytes(s);
             if (available >= 0)
             {
-                logf("[WS2 HOOK] recv: WSAEWOULDBLOCK, %d bytes available in buffer", available);
+                logf_rate_limited("recv_wouldblock", "[WS2 HOOK] recv: WSAEWOULDBLOCK, %d bytes available in buffer",
+                                  available);
             }
             else
             {
-                logf("[WS2 HOOK] recv: WSAEWOULDBLOCK, buffer state unknown");
+                logf_rate_limited("recv_wouldblock_unknown", "[WS2 HOOK] recv: WSAEWOULDBLOCK, buffer state unknown");
             }
 
             // Convert WSAEWOULDBLOCK to 0 for server.dll calls
@@ -425,7 +426,8 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
         return real_send(s, buf, len, flags);
     }
 
-    logf("[WS2 HOOK] send: called from server.dll: socket=%u, len=%d, flags=0x%X", (unsigned)s, len, flags);
+    logf_rate_limited("send_called", "[WS2 HOOK] send: called from server.dll: socket=%u, len=%d, flags=0x%X",
+                      (unsigned)s, len, flags);
 
     // Validate parameters
     if (!validate_winsock_params(buf, len))
@@ -445,8 +447,9 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
             int error = WSAGetLastError();
             if (error == WSAEWOULDBLOCK)
             {
-                logf("[WS2 HOOK] send: WSAEWOULDBLOCK, send buffer likely full (retry %d/%d)", retry_count + 1,
-                     SEND_MAX_RETRIES);
+                logf_rate_limited("send_wouldblock",
+                                  "[WS2 HOOK] send: WSAEWOULDBLOCK, send buffer likely full (retry %d/%d)",
+                                  retry_count + 1, SEND_MAX_RETRIES);
                 Sleep(SEND_RETRY_DELAY_MS);
                 retry_count++;
                 continue;
@@ -473,7 +476,8 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 
     if (retry_count >= SEND_MAX_RETRIES)
     {
-        logf("[WS2 HOOK] send: Max retries exceeded, sent %d/%d bytes (send buffer full)", total, len);
+        logf_rate_limited("send_max_retries",
+                          "[WS2 HOOK] send: Max retries exceeded, sent %d/%d bytes (send buffer full)", total, len);
         WSASetLastError(WSAETIMEDOUT);
         return total > 0 ? total : SOCKET_ERROR;
     }
