@@ -38,9 +38,11 @@
 #define SEND_RETRY_DELAY_MS 1 // Delay between send retries in milliseconds
 
 // Global state
-static BOOL    g_HooksInitialized = false;
-static DWORD   g_server_rva = 0;
-static HMODULE g_hServerDll = NULL;
+static BOOL      g_HooksInitialized = false;
+static DWORD     g_server_rva = 0;
+static HMODULE   g_hServerDll = NULL;
+static uintptr_t g_server_base = 0;
+static size_t    g_server_size = 0;
 
 // Original function pointers
 static int(WSAAPI *real_recv)(SOCKET, char *, int, int) = NULL;
@@ -143,6 +145,8 @@ static void reset_server_globals(void)
         g_hServerDll = NULL;
     }
     g_server_rva = 0;
+    g_server_base = 0;
+    g_server_size = 0;
 }
 
 /**
@@ -208,7 +212,7 @@ static BOOL load_server_dll(const char *serverPath)
  */
 static BOOL init_server_module(void)
 {
-    if (g_hServerDll != NULL && g_server_rva != 0)
+    if (g_hServerDll != NULL && g_server_rva != 0 && g_server_base != 0)
     {
         return TRUE; // Already fully initialized
     }
@@ -224,7 +228,23 @@ static BOOL init_server_module(void)
     // Load, validate, and detect version
     if (!load_server_dll(serverPath) || (g_server_rva = detect_server_version()) == 0)
     {
-        // reset_server_globals();
+        reset_server_globals();
+        return FALSE;
+    }
+
+    // Get module information for range checking
+    MODULEINFO module_info = {0};
+    if (GetModuleInformation(GetCurrentProcess(), g_hServerDll, &module_info, sizeof(module_info)))
+    {
+        g_server_base = (uintptr_t)module_info.lpBaseOfDll;
+        g_server_size = module_info.SizeOfImage;
+        logf("[HOOK] Server module range: 0x%p - 0x%p (size: 0x%zX)", (void *)g_server_base,
+             (void *)(g_server_base + g_server_size), g_server_size);
+    }
+    else
+    {
+        logf("[HOOK] Failed to get server module info: %lu", GetLastError());
+        reset_server_globals();
         return FALSE;
     }
 
@@ -235,45 +255,22 @@ static BOOL init_server_module(void)
  * Determines if a calling function address is within the server.dll module range.
  * Used to selectively apply network fixes only to game's server code.
  *
- * Note: This method uses address range checking which is not 100% reliable.
- * A more robust solution would use stack walking but is significantly more complex.
+ * Uses simple range checking for performance - much faster than GetModuleHandleEx().
  *
- * @param s Socket handle for logging setup
+ * @param s Socket handle (unused, kept for API compatibility)
+ * @param caller_addr Address to check
  * @return TRUE if caller is from server.dll, FALSE otherwise
  */
 BOOL is_caller_from_server(SOCKET s, uintptr_t caller_addr)
 {
-    //    uintptr_t caller_addr = (uintptr_t)CALLER_IP();
-
-    // Log socket buffer info on first use from server.dll
-    // log_socket_buffer_info(s);
-
-    if (!g_hServerDll)
+    // Check if server module is initialized
+    if (g_server_base == 0 || g_server_size == 0)
     {
-        logf_rate_limited("server_not_init", "[HOOK] DEBUG: g_hServerDll is 0 - server module not initialized");
         return FALSE;
     }
 
-    HMODULE hModule = NULL;
-
-    // logf("[HOOK] DEBUG: g_hServerDll=0x%p", g_hServerDll);
-
-    // Get the module handle for the given address
-    if (!GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           (LPCSTR)caller_addr, &hModule))
-    {
-        DWORD error = GetLastError();
-        logf("[HOOK] DEBUG: GetModuleHandleEx failed for addr 0x%p, error=%lu", (void *)caller_addr, error);
-        return FALSE;
-    }
-
-    // logf("[HOOK] DEBUG: GetModuleHandleEx returned hModule=0x%p for addr 0x%p", hModule, (void *)caller_addr);
-    // logf("[HOOK] DEBUG: Comparing hModule=0x%p with g_hServerDll=0x%p", hModule, g_hServerDll);
-
-    // Compare with the known server module handle
-    BOOL result = (hModule == g_hServerDll);
-    // logf("[HOOK] DEBUG: is_caller_from_server returning %s", result ? "TRUE" : "FALSE");
-    return result;
+    // Simple range check: is address within [base, base + size)?
+    return (caller_addr >= g_server_base && caller_addr < g_server_base + g_server_size);
 }
 
 /**
@@ -693,6 +690,7 @@ void cleanup_hooks(void)
     logf("[HOOK] Cleanup completed (Disable: %d, Uninit: %d)", (int)disableStatus, (int)uninitStatus);
 
     // Free the globally loaded server.dll
+
     if (g_hServerDll)
     {
         logf("[HOOK] Freeing server.dll handle");
