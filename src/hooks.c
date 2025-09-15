@@ -34,8 +34,8 @@
 
 // Constants
 #define DEFAULT_SERVER_PATH "Server\\server.dll"
-#define SEND_MAX_RETRIES 1000 // Maximum retry attempts for send operations
-#define SEND_RETRY_DELAY_MS 1 // Delay between send retries in milliseconds
+#define SEND_MAX_RETRIES 10000 // Maximum retry attempts for send operations
+#define SEND_RETRY_DELAY_MS 5  // Delay between send retries in milliseconds
 
 // Global state
 static BOOL      g_HooksInitialized = false;
@@ -397,6 +397,7 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
     else if (result == 0)
     {
         logf("[WS2 HOOK] recv: Connection gracefully closed by peer on socket %u", (unsigned)s);
+        log_socket_buffer_info(s);
     }
 
     return result;
@@ -475,6 +476,7 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
     {
         logf_rate_limited("send_max_retries",
                           "[WS2 HOOK] send: Max retries exceeded, sent %d/%d bytes (send buffer full)", total, len);
+        log_socket_buffer_info(s);
         WSASetLastError(WSAETIMEDOUT);
         return total > 0 ? total : SOCKET_ERROR;
     }
