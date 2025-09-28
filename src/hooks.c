@@ -13,6 +13,7 @@
 #include "sha256.h"
 #include "versions.h"
 #include <dbghelp.h>
+#include <limits.h>
 #include <psapi.h>
 #include <shlwapi.h>
 #include <stdbool.h>
@@ -35,8 +36,8 @@
 
 // Constants
 #define DEFAULT_SERVER_PATH "Server\\server.dll"
-#define SEND_MAX_RETRIES 1000 // Maximum retry attempts for send operations
-#define SEND_RETRY_DELAY_MS 5  // Delay between send retries in milliseconds
+#define SEND_MAX_RETRIES INT_MAX // Maximum retry attempts for send operations
+#define SEND_RETRY_DELAY_MS 5    // Delay between send retries in milliseconds
 
 // Global state
 static BOOL      g_HooksInitialized = false;
