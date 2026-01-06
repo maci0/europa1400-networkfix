@@ -107,21 +107,10 @@ void logf(const char *fmt, ...)
 static char *GetErrorDescription(int errorCode)
 {
     char *buffer = NULL;
-    DWORD result =
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                       NULL, errorCode, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buffer, 0, NULL);
+    FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+                   errorCode, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buffer, 0, NULL);
 
-    if (result == 0)
-    {
-        // Fallback for unknown errors
-        const char *unknown = "Unknown error";
-        buffer = (char *)LocalAlloc(LPTR, strlen(unknown) + 1);
-        if (buffer)
-        {
-            strcpy(buffer, unknown);
-        }
-    }
-
+    // Returns NULL if FormatMessageA fails - caller handles this case
     return buffer;
 }
 

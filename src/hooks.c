@@ -179,8 +179,7 @@ static BOOL init_server_module(void)
     }
 
     // Get server path from game.ini or use default
-    extern HMODULE g_hModule; // Declared in main.c
-    const char    *serverPath = get_server_path_from_ini(g_hModule);
+    const char *serverPath = get_server_path_from_ini(g_hModule);
     if (!serverPath)
     {
         serverPath = DEFAULT_SERVER_PATH;
