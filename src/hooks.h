@@ -22,4 +22,7 @@ int __cdecl  hook_srv_gameStreamReader(int *ctx, int received, int totalLen);
 // Configuration
 const char *get_server_path_from_ini(HMODULE hModule);
 
+// Global module handle (defined in main.c)
+extern HMODULE g_hModule;
+
 #endif // HOOKS_H

@@ -117,8 +117,9 @@ static BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva
     // Check JZ instruction at offset 18 (0x0F 0x84)
     if (func_start[18] == 0x0F && func_start[19] == 0x84)
     {
-        // Extract 32-bit relative offset (little endian)
-        DWORD jz_offset = *(DWORD *)(func_start + 20);
+        // Extract 32-bit relative offset (little endian) using memcpy for safe unaligned access
+        DWORD jz_offset;
+        memcpy(&jz_offset, func_start + 20, sizeof(DWORD));
         DWORD jz_target = rva_offset + 24 + jz_offset; // 24 = instruction start + instruction length
 
         // Target should be within reasonable bounds of the module
@@ -132,8 +133,9 @@ static BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva
     // 3. Check JNZ instruction at offset 28 (0x0F 0x85)
     if (func_start[28] == 0x0F && func_start[29] == 0x85)
     {
-        // Extract 32-bit relative offset (little endian)
-        DWORD jnz_offset = *(DWORD *)(func_start + 30);
+        // Extract 32-bit relative offset (little endian) using memcpy for safe unaligned access
+        DWORD jnz_offset;
+        memcpy(&jnz_offset, func_start + 30, sizeof(DWORD));
         DWORD jnz_target = rva_offset + 34 + jnz_offset; // 34 = instruction start + instruction length
 
         // Target should be within reasonable bounds of the module
