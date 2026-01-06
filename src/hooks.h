@@ -18,7 +18,7 @@ BOOL is_caller_from_server(SOCKET s, uintptr_t caller_addr);
 int WSAAPI   hook_recv(SOCKET s, char *buf, int len, int flags);
 int WSAAPI   hook_send(SOCKET s, const char *buf, int len, int flags);
 DWORD WINAPI hook_GetTickCount(void);
-int __cdecl hook_ServerFunction(int *ctx, int received, int totalLen);
+int __cdecl  hook_ServerFunction(int *ctx, int received, int totalLen);
 
 // Configuration
 const char *get_server_path_from_ini(HMODULE hModule);

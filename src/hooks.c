@@ -12,7 +12,6 @@
 #include "pattern_matcher.h"
 #include "sha256.h"
 #include "versions.h"
-#include <dbghelp.h>
 #include <limits.h>
 #include <psapi.h>
 #include <shlwapi.h>
@@ -162,81 +161,6 @@ static int get_available_bytes(SOCKET s)
         return -1;
     }
     return (int)available;
-}
-
-/**
- * Logs a simple stack trace when invalid parameters are detected.
- * Uses CaptureStackBackTrace to get caller addresses.
- */
-static void log_stack_trace(const char *context)
-{
-    void *stack[8];
-    WORD  frames = CaptureStackBackTrace(1, 8, stack, NULL);
-
-    if (frames > 0)
-    {
-        logf("[WS2 HOOK] %s stack trace (%d frames):", context, frames);
-        for (WORD i = 0; i < frames && i < 8; i++)
-        {
-            logf("[WS2 HOOK]   Frame %d: 0x%p", i, stack[i]);
-        }
-    }
-    else
-    {
-        logf("[WS2 HOOK] %s: Failed to capture stack trace", context);
-    }
-}
-
-/**
- * Validates Winsock function parameters.
- * Common validation for recv/send operations.
- *
- * @param buf Buffer pointer to validate
- * @param len Buffer length to validate
- * @param function_name Name of the calling function for logging
- * @return TRUE if parameters are valid, FALSE otherwise (sets WSA error)
- */
-static BOOL validate_winsock_params(const void *buf, int len, const char *function_name)
-{
-    if (!buf || len <= 0)
-    {
-        uintptr_t caller_addr = (uintptr_t)CALLER_IP();
-        logf("[WS2 HOOK] %s: Invalid parameters: buf=%p, len=%d (caller=0x%p)", function_name, buf, len,
-             (void *)caller_addr);
-
-        // Additional context for negative lengths (potential overflow)
-        if (len < 0)
-        {
-            logf("[WS2 HOOK] %s: Negative length detected - possible integer overflow (len=%d, hex=0x%08X)",
-                 function_name, len, (unsigned int)len);
-
-            // Log stack trace for debugging when we get negative lengths
-            log_stack_trace("Invalid negative length");
-        }
-
-        WSASetLastError(WSAEINVAL);
-        return FALSE;
-    }
-
-    // Basic buffer address validation - check if it's obviously invalid
-    uintptr_t buf_addr = (uintptr_t)buf;
-    if (buf_addr < 0x10000) // Very low addresses are usually invalid
-    {
-        logf("[WS2 HOOK] %s: Suspicious low buffer address: %p", function_name, buf);
-        log_stack_trace("Suspicious buffer address");
-        WSASetLastError(WSAEFAULT);
-        return FALSE;
-    }
-
-    // Check for potential overflow when adding length to buffer address
-    if (len > 0 && buf_addr > UINTPTR_MAX - (uintptr_t)len)
-    {
-        logf("[WS2 HOOK] %s: Buffer + length would overflow: buf=%p, len=%d", function_name, buf, len);
-        WSASetLastError(WSAEFAULT);
-        return FALSE;
-    }
-
-    return TRUE;
 }
 
 /**
@@ -420,10 +344,11 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
         return real_recv(s, buf, len, flags);
     }
 
-    // Validate parameters
-    if (!validate_winsock_params(buf, len, "recv"))
+    // Log suspicious parameters but don't block - let Windows handle them
+    // (Original HarryTheBird version passed all params through directly)
+    if (!buf || len <= 0)
     {
-        return SOCKET_ERROR;
+        logf("[WS2 HOOK] recv: Suspicious parameters: buf=%p, len=%d (hex=0x%08X)", buf, len, (unsigned int)len);
     }
 
     int result = real_recv(s, buf, len, flags);
@@ -485,10 +410,11 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
     logf_rate_limited("send_called", "[WS2 HOOK] send: called from server.dll: socket=%u, len=%d, flags=0x%X",
                       (unsigned)s, len, flags);
 
-    // Validate parameters
-    if (!validate_winsock_params(buf, len, "send"))
+    // Log suspicious parameters but don't block - let the loop handle them naturally
+    // (Original HarryTheBird version: while(total < len) exits immediately if len <= 0)
+    if (!buf || len <= 0)
     {
-        return SOCKET_ERROR;
+        logf("[WS2 HOOK] send: Suspicious parameters: buf=%p, len=%d (hex=0x%08X)", buf, len, (unsigned int)len);
     }
 
     int total = 0;
