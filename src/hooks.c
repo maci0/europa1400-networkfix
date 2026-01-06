@@ -36,7 +36,7 @@
 // Constants
 #define DEFAULT_SERVER_PATH "Server\\server.dll"
 #define SEND_MAX_RETRIES INT_MAX // Maximum retry attempts for send operations
-#define SEND_RETRY_DELAY_MS 5    // Delay between send retries in milliseconds
+#define SEND_RETRY_DELAY_MS 1    // Delay between send retries (matches original)
 
 // Global state
 static BOOL      g_HooksInitialized = false;
@@ -86,52 +86,31 @@ static DWORD detect_server_version()
 
     logf("[HOOK] server.dll SHA256: %s", fileHash);
 
-    // SHA256-based version lookup is currently disabled - using pattern matching instead
-    DWORD checksum_rva = 0;
-    /*for (int i = 0; known_versions[i].sha256_hash != NULL; i++)
-    {
-        if (strcmp(fileHash, known_versions[i].sha256_hash) == 0)
-        {
-            logf("[HOOK] Detected %s version (RVA: 0x%X)", known_versions[i].version_name,
-                 known_versions[i].target_rva);
-            checksum_rva = known_versions[i].target_rva;
-            break;
-        }
-    }*/
-
-    // Use pattern matching to find srv_gameStreamReader function
+    // Try pattern matching first
     DWORD                pattern_rva = 0;
     PATTERN_MATCH_RESULT result = find_srv_gameStreamReader_by_pattern(g_hServerDll, &pattern_rva);
 
-    logf("[HOOK] Pattern matching result: %s", pattern_match_result_to_string(result));
     if (result == PATTERN_MATCH_SUCCESS)
     {
         logf("[HOOK] Pattern matcher found srv_gameStreamReader at RVA: 0x%X", pattern_rva);
-        if (checksum_rva != 0)
+        return pattern_rva;
+    }
+
+    logf("[HOOK] Pattern matching failed: %s", pattern_match_result_to_string(result));
+
+    // Fallback to SHA256-based version lookup
+    for (int i = 0; known_versions[i].sha256_hash != NULL; i++)
+    {
+        if (strcmp(fileHash, known_versions[i].sha256_hash) == 0)
         {
-            if (pattern_rva == checksum_rva)
-            {
-                logf("[HOOK] Pattern matching SUCCESS: RVAs match (0x%X)", pattern_rva);
-            }
-            else
-            {
-                logf("[HOOK] Pattern matching MISMATCH: checksum=0x%X, pattern=0x%X", checksum_rva, pattern_rva);
-            }
+            logf("[HOOK] Fallback: Detected %s version (RVA: 0x%X)", known_versions[i].version_name,
+                 known_versions[i].target_rva);
+            return known_versions[i].target_rva;
         }
     }
-    else
-    {
-        logf("[HOOK] Pattern matching failed: %s", pattern_match_result_to_string(result));
-    }
 
-    if (pattern_rva == 0)
-    {
-        logf("[HOOK] Unknown server.dll version with hash: %s", fileHash);
-    }
-
-    logf("[HOOK] Server version detected, will use RVA: 0x%X", pattern_rva);
-
-    return pattern_rva;
+    logf("[HOOK] Unknown server.dll version with hash: %s", fileHash);
+    return 0;
 }
 
 /**
@@ -239,11 +218,10 @@ static BOOL init_server_module(void)
  *
  * Uses simple range checking for performance - much faster than GetModuleHandleEx().
  *
- * @param s Socket handle (unused, kept for API compatibility)
  * @param caller_addr Address to check
  * @return TRUE if caller is from server.dll, FALSE otherwise
  */
-BOOL is_caller_from_server(SOCKET s, uintptr_t caller_addr)
+BOOL is_caller_from_server(uintptr_t caller_addr)
 {
     // Check if server module is initialized
     if (g_server_base == 0 || g_server_size == 0)
@@ -337,9 +315,8 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
  */
 int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
 {
-    // Check if caller is from server.dll and set up logging
-
-    if (!is_caller_from_server(s, (uintptr_t)CALLER_IP()))
+    // Check if caller is from server.dll
+    if (!is_caller_from_server((uintptr_t)CALLER_IP()))
     {
         return real_recv(s, buf, len, flags);
     }
@@ -401,8 +378,8 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
  */
 int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 {
-    // Check if caller is from server.dll and set up logging
-    if (!is_caller_from_server(s, (uintptr_t)CALLER_IP()))
+    // Check if caller is from server.dll
+    if (!is_caller_from_server((uintptr_t)CALLER_IP()))
     {
         return real_send(s, buf, len, flags);
     }
