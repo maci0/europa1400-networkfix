@@ -2,7 +2,7 @@
  * pattern_matcher.c: Pattern matching for finding function offsets in server.dll
  *
  * This module provides pattern matching functionality to locate the target
- * zlib_readFromStream function across different versions of server.dll without
+ * srv_gameStreamReader function across different versions of server.dll without
  * relying on fixed offsets or file checksums.
  */
 
@@ -114,13 +114,13 @@ static BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva
     }
 
     // 2. Validate the conditional jump targets are reasonable
-    // Check JZ instruction at offset 18 (0x0F 0x84)
+    // Check JZ instruction at offset 18 (0x0F 0x84), operand at 20-23, instruction ends at 24
     if (func_start[18] == 0x0F && func_start[19] == 0x84)
     {
         // Extract 32-bit relative offset (little endian) using memcpy for safe unaligned access
         DWORD jz_offset;
         memcpy(&jz_offset, func_start + 20, sizeof(DWORD));
-        DWORD jz_target = rva_offset + 24 + jz_offset; // 24 = instruction start + instruction length
+        DWORD jz_target = rva_offset + 24 + jz_offset;
 
         // Target should be within reasonable bounds of the module
         if (jz_target >= module_size)
@@ -130,13 +130,13 @@ static BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva
         }
     }
 
-    // 3. Check JNZ instruction at offset 28 (0x0F 0x85)
+    // 3. Check JNZ instruction at offset 28 (0x0F 0x85), operand at 30-33, instruction ends at 34
     if (func_start[28] == 0x0F && func_start[29] == 0x85)
     {
         // Extract 32-bit relative offset (little endian) using memcpy for safe unaligned access
         DWORD jnz_offset;
         memcpy(&jnz_offset, func_start + 30, sizeof(DWORD));
-        DWORD jnz_target = rva_offset + 34 + jnz_offset; // 34 = instruction start + instruction length
+        DWORD jnz_target = rva_offset + 34 + jnz_offset;
 
         // Target should be within reasonable bounds of the module
         if (jnz_target >= module_size)
