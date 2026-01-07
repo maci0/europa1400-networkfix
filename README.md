@@ -1,12 +1,13 @@
 # europa1400-networkfix
 
-A network stability patch for *Europa 1400: The Guild* implemented as an `.asi` plugin.
+A network stability patch for *Europa 1400: The Guild* that fixes multiplayer desynchronization issues over VPNs and modern internet connections. Implemented as a non-invasive `.asi` plugin using runtime API hooking.
 
 ## Features
 
-- **Improved network stability:** Fixes desynchronization and disconnection issues caused by packet loss, making the game playable over VPNs and modern internet connections.
-- **Resilient network communication:** Adds retry logic to the game's network code, allowing it to recover from temporary network interruptions.
-- **Compatibility:** Works with the original game and does not modify any game files.
+- **Improved network stability:** Fixes desynchronization and disconnection issues caused by packet loss, making the game playable over VPNs (Hamachi, Radmin) and modern internet connections
+- **Resilient network communication:** Adds retry logic and proper error handling to the game's network code, allowing it to recover from temporary network interruptions
+- **Non-invasive:** Works as a plugin without modifying any game files - simply drop into game directory
+- **Proven stability:** Tested with 15+ in-game years of stable multiplayer sessions over VPN connections
 
 ## Why?
 
@@ -20,39 +21,96 @@ This project draws on research from [The-Guild-1-HookDLLs](https://github.com/Ha
 and provides a lightweight fix aimed at making the network stack resilient to
 real‑world connections.
 
-## How?
+## How It Works
 
-The `.asi` plugin is injected into the game and uses
-[MinHook](https://github.com/TsudaKageyu/minhook) to intercept functions inside
-`server.dll` and the Windows networking APIs.  By patching these routines we add
-basic error handling and retry logic, allowing multiplayer sessions to survive
-packet loss and latency.
+The `.asi` plugin is loaded automatically by the game and uses [MinHook](https://github.com/TsudaKageyu/minhook) to intercept key functions at runtime:
 
-The project builds a Windows dynamic library using [Zig](https://ziglang.org/)
-and MinHook to implement the hooks.
+1. **Windows Socket API hooks** (`recv`/`send`) - Converts `WSAEWOULDBLOCK` errors into graceful retries instead of fatal errors
+2. **Timing function hooks** (`GetTickCount`) - Ensures consistent timer behavior across network delays
+3. **Game-specific hooks** (`server.dll` packet validation) - Resets persistent error states that cause "Out of Sync" errors
+
+By applying surgical fixes only to problematic functions, the plugin adds proper error handling and retry logic without changing game behavior.
+
+**See also:**
+- [docs/problem-analysis.md](docs/problem-analysis.md) - Detailed technical problem analysis
+- [docs/architecture.md](docs/architecture.md) - Complete architecture documentation
+- [docs/development-guide.md](docs/development-guide.md) - Building and contributing guide
+- [docs/configuration.md](docs/configuration.md) - Configuration options
+- [docs/server-dll-versions.md](docs/server-dll-versions.md) - Supported game versions
+
+### Technical Stack
+
+- **Language:** C (compiled with [Zig](https://ziglang.org/) for cross-compilation)
+- **Hooking library:** [MinHook](https://github.com/TsudaKageyu/minhook) for x86 function interception
+- **Target:** 32-bit Windows executable (Europa 1400 Gold Edition)
 
 ## Building
 
 ### Prerequisites
 
-- [Zig](https://ziglang.org/) (version 0.11.0 or later)
-- [make](https://www.gnu.org/software/make/)
+- [Zig](https://ziglang.org/) (version 0.11.0 or later) - Cross-platform C compiler
+- [make](https://www.gnu.org/software/make/) - Build automation
+- [clang-format](https://clang.llvm.org/docs/ClangFormat.html) (optional) - Code formatting
 
-Ensure [Zig](https://ziglang.org/) is installed and initialize submodules:
+### Build Instructions
 
+1. Clone the repository with submodules:
+```bash
+git clone --recursive https://github.com/maci0/europa1400-networkfix.git
+cd europa1400-networkfix
 ```
-git submodule update --init --recursive
+
+2. Build the release version:
+```bash
 make
 ```
 
-The compiled plugin will be written to `bin/networkfix.asi`.
+3. Or build the debug version (includes debug symbols and verbose logging):
+```bash
+make debug
+```
 
-## Usage
+The compiled plugins will be in:
+- **Release:** `bin/networkfix.asi`
+- **Debug:** `bin/networkfix-debug.asi`
 
-This fix is for the Gold Edition of *Europa 1400: The Guild*.
+### Build Targets
 
-1. **Copy the plugin.** Copy `bin/networkfix.asi` into the root directory of your *Europa 1400: The Guild - Gold Edition* installation. This is the directory that contains the game's main executable (`Europa1400Gold_TL.exe`).
-2. **Run the game.** The plugin will be loaded automatically when you start the game.
+- `make` or `make all` - Build release version with optimizations
+- `make debug` - Build debug version with symbols and verbose logging
+- `make clean` - Remove compiled binaries
+- `make format` - Format source code with clang-format
+- `make install` - Copy plugin to Wine installation (Linux only)
+
+## Installation
+
+### Supported Game Versions
+
+- **Europa 1400: The Guild - Gold Edition** (primary support)
+  - Steam version (German) - Fully tested
+  - GOG version - Supported with different hook offsets
+  - Other localizations - May require version detection
+
+### Installation Steps
+
+1. **Locate your game directory**
+   - Find the folder containing `Europa1400Gold_TL.exe`
+   - Steam default: `C:\Program Files (x86)\Steam\steamapps\common\Europa 1400`
+   - GOG default: `C:\GOG Games\Europa 1400`
+
+2. **Copy the plugin**
+   - Copy `bin/networkfix.asi` to the game directory
+   - Place it in the same folder as the game executable
+
+3. **Verify installation**
+   - Launch the game
+   - Check for `hook_log.txt` in the game directory
+   - Look for `[HOOK] Hook initialization complete` in the log
+
+4. **Test multiplayer**
+   - Start or join a multiplayer game
+   - The plugin works silently in the background
+   - Network errors should now be handled gracefully
 
 ## Troubleshooting
 
@@ -118,9 +176,37 @@ If issues persist, please create an issue on the [GitHub repository](https://git
 - **Connection Recovery**: Test network interruption recovery and retry logic functionality
 - **Performance Impact**: Measure any performance impact from the network hooks during gameplay
 
+## Documentation
+
+Comprehensive documentation is available in the [docs/](docs/) directory:
+
+### For Users
+- **[README.md](README.md)** (this file) - Installation and basic usage
+- **[Troubleshooting](#troubleshooting)** - Common issues and solutions
+- **[docs/configuration.md](docs/configuration.md)** - Configuration options and tuning
+
+### For Developers
+- **[docs/development-guide.md](docs/development-guide.md)** - Building, debugging, and contributing
+- **[docs/architecture.md](docs/architecture.md)** - Technical architecture and implementation
+- **[docs/problem-analysis.md](docs/problem-analysis.md)** - Root cause analysis and solution design
+- **[docs/server-dll-versions.md](docs/server-dll-versions.md)** - Game version compatibility
+
+### Quick Links
+- [How the fix works](docs/architecture.md#hook-implementation-details)
+- [Building from source](docs/development-guide.md#building-from-source)
+- [Adding new hooks](docs/development-guide.md#adding-new-hooks)
+- [Configuration examples](docs/configuration.md#configuration-examples)
+
 ## Contributing
 
-Contributions are welcome! If you would like to contribute to this project, please fork the repository and submit a pull request.
+Contributions are welcome! Please see the [Development Guide](docs/development-guide.md) for detailed instructions on building, testing, and submitting pull requests.
+
+**Quick start:**
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feat/my-feature`
+3. Make your changes and test thoroughly
+4. Follow the [code style guidelines](docs/development-guide.md#code-style-guidelines)
+5. Submit a pull request with a clear description
 
 ## Credits
 
