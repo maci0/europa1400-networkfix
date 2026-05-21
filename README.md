@@ -181,10 +181,11 @@ make test
 
 Coverage spans `hook_recv` / `hook_send` retry semantics, the
 `srv_gameStreamReader` fixes, pattern matching, prologue validation, SHA256
-file hashing, and `game.ini` parsing. Drop a real `server.dll` in the repo
-root to also enable end-to-end integration tests (hash → version detection →
-pattern matcher → expected RVA); those four tests skip cleanly when the
-fixture is absent. See
+file hashing, and `game.ini` parsing. Drop one or more real `server*.dll`
+files in the repo root (e.g. `server.dll` for GOG, `server-steam.dll` for
+Steam) to also enable end-to-end integration tests: hash → version detection
+→ pattern matcher → expected RVA. The fixture suite iterates every matching
+file and skips cleanly when none are present. See
 [Automated Testing](docs/development-guide.md#automated-testing) for details.
 
 ### Manual testing TODO

@@ -651,66 +651,114 @@ static void test_ini_null_module_returns_null(void)
     CHECK(p == NULL, "expected NULL on NULL hModule, got: %s", p ? p : "(null)");
 }
 
-/* ---- Real server.dll fixture tests (skipped when fixture missing) ---- */
+/* ---- Real server.dll fixture tests ---- */
 
-static BOOL fixture_server_dll_present(void)
+/* Looks up a hash in known_versions[]. Returns matching entry or NULL. */
+static const server_version_info_t *lookup_known_version(const char *hash)
 {
-    DWORD attrs = GetFileAttributesW(L"server.dll");
-    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
-}
-
-/* Hash a real shipped server.dll and confirm it matches a known_versions[] entry. */
-static void test_sha256_real_server_dll_matches_known_version(void)
-{
-    if (!fixture_server_dll_present())
-    {
-        printf("  SKIP (no server.dll fixture)\n");
-        return;
-    }
-
-    char hash[65] = {0};
-    BOOL ok = calculate_file_sha256(L"server.dll", hash, sizeof(hash));
-    CHECK(ok == TRUE, "calculate_file_sha256 failed on server.dll");
-    CHECK(is_lowercase_hex_64(hash), "hash not 64 lowercase hex chars: %s", hash);
-
-    BOOL matched = FALSE;
     for (int i = 0; known_versions[i].sha256_hash != NULL; i++)
     {
         if (strcmp(hash, known_versions[i].sha256_hash) == 0)
-        {
-            printf("  matched known version: %s (RVA 0x%X)\n", known_versions[i].version_name,
-                   (unsigned)known_versions[i].target_rva);
-            matched = TRUE;
-            break;
-        }
+            return &known_versions[i];
     }
-    CHECK(matched == TRUE, "hash %s did not match any known_versions[] entry", hash);
+    return NULL;
 }
 
-/* Real prologue should pass the validation heuristic at the known RVA. */
-static void test_validate_prologue_on_real_server_dll(void)
+/* Runs all four real-DLL checks against a single fixture: hash matches a
+ * known_versions[] entry, pattern matcher reports the expected RVA, prologue
+ * heuristic accepts the real bytes at that RVA, and the pattern occurs
+ * exactly once in the loaded image. */
+static void run_fixture_tests(const wchar_t *fixture_path)
 {
-    if (!fixture_server_dll_present())
-    {
-        printf("  SKIP (no server.dll fixture)\n");
-        return;
-    }
+    char fixture_path_a[MAX_PATH] = {0};
+    WideCharToMultiByte(CP_ACP, 0, fixture_path, -1, fixture_path_a, sizeof(fixture_path_a), NULL, NULL);
+    printf("  fixture: %s\n", fixture_path_a);
 
-    HMODULE h = LoadLibraryW(L"server.dll");
+    char hash[65] = {0};
+    CHECK(calculate_file_sha256(fixture_path, hash, sizeof(hash)) == TRUE, "hash failed");
+    CHECK(is_lowercase_hex_64(hash), "hash not 64 lowercase hex chars: %s", hash);
+
+    const server_version_info_t *v = lookup_known_version(hash);
+    CHECK(v != NULL, "hash %s does not match any known_versions[] entry", hash);
+    if (!v)
+        return;
+    printf("    matched: %s (expected RVA 0x%X)\n", v->version_name, (unsigned)v->target_rva);
+
+    HMODULE h = LoadLibraryW(fixture_path);
     CHECK(h != NULL, "LoadLibraryW failed: %lu", GetLastError());
     if (!h)
         return;
 
+    /* Pattern matcher returns the expected RVA for this version. */
+    DWORD                rva = 0;
+    PATTERN_MATCH_RESULT r = find_srv_gameStreamReader_by_pattern(h, &rva);
+    CHECK(r == PATTERN_MATCH_SUCCESS, "pattern matcher returned %d (%s)", (int)r,
+          pattern_match_result_to_string(r));
+    CHECK(rva == v->target_rva, "RVA mismatch: got 0x%X, expected 0x%X", (unsigned)rva, (unsigned)v->target_rva);
+
+    /* Prologue heuristic accepts the real bytes at the known RVA. */
     MODULEINFO mi = {0};
     CHECK(GetModuleInformation(GetCurrentProcess(), h, &mi, sizeof(mi)) != 0,
           "GetModuleInformation failed: %lu", GetLastError());
+    if (mi.SizeOfImage > 0)
+    {
+        BOOL ok = validate_function_prologue((const unsigned char *)mi.lpBaseOfDll, v->target_rva, mi.SizeOfImage);
+        CHECK(ok == TRUE, "prologue validation failed at RVA 0x%X", (unsigned)v->target_rva);
+    }
 
-    /* GOG version we know is shipped here; RVA from versions.h. */
-    const DWORD known_rva = 0x3960;
-    BOOL        ok = validate_function_prologue((const unsigned char *)mi.lpBaseOfDll, known_rva, mi.SizeOfImage);
-    CHECK(ok == TRUE, "real prologue at RVA 0x%X failed validation", (unsigned)known_rva);
+    /* Uniqueness: pattern occurs exactly once. */
+    const unsigned char needle[] = {
+        0x51, 0x8B, 0x4C, 0x24, 0x0C, 0x53, 0x55, 0x8B, 0x6C, 0x24, 0x10, 0x56, 0x57,
+        0x85, 0xED, 0x8B, 0xF1, 0x0F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x80, 0x7D, 0x5C,
+        0x72, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x45, 0x38,
+    };
+    const unsigned char mask[] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0xFF, 0x00, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+    };
+    if (mi.SizeOfImage > 0)
+    {
+        const unsigned char *base = (const unsigned char *)mi.lpBaseOfDll;
+        size_t               size = mi.SizeOfImage;
+        long                 first = find_pattern_in_memory(base, size, needle, mask, sizeof(needle));
+        CHECK(first >= 0, "first match not found");
+        if (first >= 0)
+        {
+            long step = first + 1;
+            long second = find_pattern_in_memory(base + step, size - step, needle, mask, sizeof(needle));
+            CHECK(second == -1, "pattern matched more than once (second hit at +0x%lX)", first + 1 + second);
+        }
+    }
 
     FreeLibrary(h);
+}
+
+/* Enumerates server*.dll in repo root and runs the fixture tests for each.
+ * This lets us cover the Steam build, the GOG build, and any future variant
+ * simply by dropping the file next to the test binary. */
+static void test_real_server_dll_fixtures(void)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE           hf = FindFirstFileW(L"server*.dll", &fd);
+    if (hf == INVALID_HANDLE_VALUE)
+    {
+        printf("  SKIP (no server*.dll fixtures)\n");
+        return;
+    }
+
+    int seen = 0;
+    do
+    {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            continue;
+        run_fixture_tests(fd.cFileName);
+        seen++;
+    } while (FindNextFileW(hf, &fd));
+    FindClose(hf);
+
+    if (seen == 0)
+        printf("  SKIP (no server*.dll fixtures)\n");
 }
 
 /* Negative control: a totally unrelated system DLL must not match the
@@ -727,97 +775,7 @@ static void test_pattern_matcher_does_not_match_unrelated_dll(void)
     CHECK(r != PATTERN_MATCH_SUCCESS, "unexpected match in ntdll at RVA 0x%X", (unsigned)rva);
     CHECK(rva == 0, "rva should be zeroed on failure, got 0x%X", (unsigned)rva);
 
-    /* Do NOT FreeLibrary(ntdll): it is pinned and FreeLibrary on it is a noop
-     * but the handle is shared system-wide; leave it alone. */
-}
-
-/* Uniqueness: the pattern should match exactly once in server.dll. Re-running
- * the raw byte search past the first hit should return -1. */
-static void test_pattern_match_is_unique_in_real_server_dll(void)
-{
-    if (!fixture_server_dll_present())
-    {
-        printf("  SKIP (no server.dll fixture)\n");
-        return;
-    }
-
-    HMODULE h = LoadLibraryW(L"server.dll");
-    CHECK(h != NULL, "LoadLibraryW failed: %lu", GetLastError());
-    if (!h)
-        return;
-
-    MODULEINFO mi = {0};
-    CHECK(GetModuleInformation(GetCurrentProcess(), h, &mi, sizeof(mi)) != 0,
-          "GetModuleInformation failed: %lu", GetLastError());
-
-    /* Reproduce the pattern + mask from pattern_matcher.c (kept in sync manually). */
-    const unsigned char needle[] = {
-        0x51, 0x8B, 0x4C, 0x24, 0x0C, 0x53, 0x55, 0x8B, 0x6C, 0x24, 0x10, 0x56, 0x57,
-        0x85, 0xED, 0x8B, 0xF1, 0x0F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x80, 0x7D, 0x5C,
-        0x72, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x45, 0x38,
-    };
-    const unsigned char mask[] = {
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0xFF, 0x00, 0xFF, 0xFF, 0xFF,
-        0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
-    };
-
-    const unsigned char *base = (const unsigned char *)mi.lpBaseOfDll;
-    size_t               size = mi.SizeOfImage;
-
-    long first = find_pattern_in_memory(base, size, needle, mask, sizeof(needle));
-    CHECK(first >= 0, "first match not found");
-
-    long step = first + 1;
-    long second = find_pattern_in_memory(base + step, size - step, needle, mask, sizeof(needle));
-    CHECK(second == -1, "pattern matched more than once (second hit at +0x%lX)", first + 1 + second);
-
-    FreeLibrary(h);
-}
-
-/* Load real server.dll and run pattern matcher; verify RVA matches the
- * known_versions[] entry for the same hash. This is the load-bearing end-to-end
- * test: it validates the pattern + mask actually finds srv_gameStreamReader in
- * a real shipped DLL, not just a synthetic fixture. */
-static void test_pattern_matcher_finds_real_srv_gameStreamReader(void)
-{
-    if (!fixture_server_dll_present())
-    {
-        printf("  SKIP (no server.dll fixture)\n");
-        return;
-    }
-
-    char hash[65] = {0};
-    if (!calculate_file_sha256(L"server.dll", hash, sizeof(hash)))
-    {
-        fprintf(stderr, "  FAIL: could not hash server.dll\n");
-        g_failures++;
-        return;
-    }
-
-    DWORD expected_rva = 0;
-    for (int i = 0; known_versions[i].sha256_hash != NULL; i++)
-    {
-        if (strcmp(hash, known_versions[i].sha256_hash) == 0)
-        {
-            expected_rva = known_versions[i].target_rva;
-            break;
-        }
-    }
-    CHECK(expected_rva != 0, "no known version for hash %s", hash);
-
-    HMODULE h = LoadLibraryW(L"server.dll");
-    CHECK(h != NULL, "LoadLibraryW(server.dll) failed: %lu", GetLastError());
-    if (!h)
-        return;
-
-    DWORD                rva = 0;
-    PATTERN_MATCH_RESULT r = find_srv_gameStreamReader_by_pattern(h, &rva);
-    CHECK(r == PATTERN_MATCH_SUCCESS, "pattern match returned %d (%s)", (int)r,
-          pattern_match_result_to_string(r));
-    CHECK(rva == expected_rva, "RVA mismatch: got 0x%X, expected 0x%X", (unsigned)rva, (unsigned)expected_rva);
-
-    FreeLibrary(h);
+    /* Do NOT FreeLibrary(ntdll): handle is shared system-wide. */
 }
 
 int main(void)
@@ -874,16 +832,10 @@ int main(void)
     test_sha256_missing_file_returns_false();
     printf("[test] test_sha256_undersized_buffer_returns_false\n");
     test_sha256_undersized_buffer_returns_false();
-    printf("[test] test_sha256_real_server_dll_matches_known_version\n");
-    test_sha256_real_server_dll_matches_known_version();
-    printf("[test] test_pattern_matcher_finds_real_srv_gameStreamReader\n");
-    test_pattern_matcher_finds_real_srv_gameStreamReader();
-    printf("[test] test_validate_prologue_on_real_server_dll\n");
-    test_validate_prologue_on_real_server_dll();
+    printf("[test] test_real_server_dll_fixtures\n");
+    test_real_server_dll_fixtures();
     printf("[test] test_pattern_matcher_does_not_match_unrelated_dll\n");
     test_pattern_matcher_does_not_match_unrelated_dll();
-    printf("[test] test_pattern_match_is_unique_in_real_server_dll\n");
-    test_pattern_match_is_unique_in_real_server_dll();
 
     printf("[test] test_ini_returns_unquoted_path\n");
     test_ini_returns_unquoted_path();
