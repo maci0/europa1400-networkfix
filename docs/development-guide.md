@@ -489,14 +489,26 @@ This builds `bin/test_hooks.exe` with `-DNETWORKFIX_TEST=1` and runs it under
 | `validate_function_prologue` | Synthetic in-bounds prologue, missing PUSH ECX, JZ/JNZ out-of-bounds, insufficient remaining bytes |
 | `calculate_file_sha256` | Determinism + collision-distinct inputs, empty file, missing file, undersized output buffer |
 | `get_server_path_from_ini` | Unquoted path, quote stripping, missing key, missing file, NULL hModule |
-| Real `server.dll` (optional fixture) | Hash matches a `known_versions[]` entry, pattern matcher returns expected RVA, prologue heuristic accepts real bytes, pattern doesn't match `ntdll.dll`, pattern hit is unique inside `server.dll` |
+| Real `server*.dll` (optional fixtures) | For every `server*.dll` in the repo root: hash matches a `known_versions[]` entry, pattern matcher returns expected RVA, prologue heuristic accepts real bytes, pattern hit is unique inside the loaded image. Also: pattern doesn't match `ntdll.dll` (negative control) |
 
-**Fixture for real-DLL tests:**
+**Fixtures for real-DLL tests:**
 
-Drop a real `server.dll` into the repository root. The corresponding tests will
-load it via `LoadLibraryW`, hash it, and run the pattern matcher end-to-end.
-Without the fixture, those four tests print `SKIP` and the run still passes.
-The fixture is git-ignored (`*.dll`) so it cannot be committed by accident.
+Drop one or more real `server*.dll` files into the repository root. The
+harness enumerates files matching the glob `server*.dll`, loads each via
+`LoadLibraryW`, hashes it, looks up the matching entry in `known_versions[]`,
+and runs the pattern matcher / prologue validation / uniqueness checks
+against that version's expected RVA. Typical setup:
+
+```
+server.dll          # GOG build (RVA 0x3960)
+server-steam.dll    # German Steam build (RVA 0x3720)
+```
+
+Each fixture exercises a different code path through `detect_server_version`,
+so dropping both gets you coverage across all supported game versions in a
+single `make test` run. If no `server*.dll` is present, the fixture suite
+prints `SKIP` and the rest of the run still passes. Fixtures are git-ignored
+(`*.dll`) so they cannot be committed by accident.
 
 **How it works under the hood:**
 
