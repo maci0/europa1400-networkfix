@@ -38,6 +38,17 @@
 #define SEND_MAX_RETRIES INT_MAX // Maximum retry attempts for send operations
 #define SEND_RETRY_DELAY_MS 1    // Delay between send retries (matches original)
 
+#ifdef NETWORKFIX_TEST
+// Test build: real_recv/real_send are externally writable mocks.
+// Sleep is redirected to a counter so retry loops do not waste wallclock time.
+#define HOOK_STATIC
+void test_sleep(DWORD ms);
+#define HOOK_SLEEP(ms) test_sleep(ms)
+#else
+#define HOOK_STATIC static
+#define HOOK_SLEEP(ms) Sleep(ms)
+#endif
+
 // Global state
 static BOOL      g_HooksInitialized = false;
 static DWORD     g_server_rva = 0;
@@ -46,13 +57,13 @@ static uintptr_t g_server_base = 0;
 static size_t    g_server_size = 0;
 
 // Original function pointers
-static int(WSAAPI *real_recv)(SOCKET, char *, int, int) = NULL;
-static int(WSAAPI *real_send)(SOCKET, const char *, int, int) = NULL;
+HOOK_STATIC int(WSAAPI *real_recv)(SOCKET, char *, int, int) = NULL;
+HOOK_STATIC int(WSAAPI *real_send)(SOCKET, const char *, int, int) = NULL;
 static DWORD(WINAPI *real_GetTickCount)(void) = NULL;
 
 /* Server.dll srv_gameStreamReader function - RVA varies by version */
 typedef int(__cdecl *srv_gameStreamReader_t)(int *ctx, int received, int totalLen);
-static srv_gameStreamReader_t real_srv_gameStreamReader = NULL;
+HOOK_STATIC srv_gameStreamReader_t real_srv_gameStreamReader = NULL;
 
 /**
  * Detect server.dll version by calculating its SHA256 hash.
@@ -222,6 +233,10 @@ static BOOL init_server_module(void)
  */
 BOOL is_caller_from_server(uintptr_t caller_addr)
 {
+#ifdef NETWORKFIX_TEST
+    (void)caller_addr;
+    return TRUE;
+#else
     // Check if server module is initialized
     if (g_server_base == 0 || g_server_size == 0)
     {
@@ -230,6 +245,7 @@ BOOL is_caller_from_server(uintptr_t caller_addr)
 
     // Simple range check: is address within [base, base + size)?
     return (caller_addr >= g_server_base && caller_addr < g_server_base + g_server_size);
+#endif
 }
 
 /**
@@ -408,7 +424,7 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
                 logf_rate_limited("send_wouldblock",
                                   "[WS2 HOOK] send: WSAEWOULDBLOCK, send buffer likely full (retry %d/%d)",
                                   retry_count + 1, SEND_MAX_RETRIES);
-                Sleep(SEND_RETRY_DELAY_MS);
+                HOOK_SLEEP(SEND_RETRY_DELAY_MS);
                 retry_count++;
                 continue;
             }

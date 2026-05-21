@@ -465,10 +465,61 @@ case DLL_PROCESS_DETACH:
 
 ### Automated Testing
 
-Currently no automated tests. Future improvements:
-- Unit tests for pattern matching
-- Mock Winsock functions for hook testing
-- Automated game session testing
+A native test harness drives the real hook functions from `src/hooks.c` and the
+helpers in `src/pattern_matcher.c` / `src/sha256.c` with scripted mocks and
+fixtures. It runs the same Zig cross-compile as the release build, then
+executes the resulting Windows PE binary under Wine.
+
+**Run all tests:**
+```bash
+make test
+```
+
+This builds `bin/test_hooks.exe` with `-DNETWORKFIX_TEST=1` and runs it under
+`wine`. Override `WINE=...` if your Wine binary lives elsewhere.
+
+**What it covers:**
+
+| Area | Tests |
+|------|-------|
+| `hook_recv` | WSAEWOULDBLOCK → 0-byte conversion, data passthrough, non-block error propagation |
+| `hook_send` | Retry-then-succeed, partial sends, `WSAECONNRESET` partial total, `WSAECONNABORTED` zero progress, peer close, retry counter reset across chunks |
+| `hook_srv_gameStreamReader` | NULL ctx → -1, negative `ctx[0xE]` zeroed, negative return zeroed, clean passthrough |
+| `find_pattern_in_memory` | Exact match, miss, mask wildcards, undersized haystack, NULL args |
+| `validate_function_prologue` | Synthetic in-bounds prologue, missing PUSH ECX, JZ/JNZ out-of-bounds, insufficient remaining bytes |
+| `calculate_file_sha256` | Determinism + collision-distinct inputs, empty file, missing file, undersized output buffer |
+| `get_server_path_from_ini` | Unquoted path, quote stripping, missing key, missing file, NULL hModule |
+| Real `server.dll` (optional fixture) | Hash matches a `known_versions[]` entry, pattern matcher returns expected RVA, prologue heuristic accepts real bytes, pattern doesn't match `ntdll.dll`, pattern hit is unique inside `server.dll` |
+
+**Fixture for real-DLL tests:**
+
+Drop a real `server.dll` into the repository root. The corresponding tests will
+load it via `LoadLibraryW`, hash it, and run the pattern matcher end-to-end.
+Without the fixture, those four tests print `SKIP` and the run still passes.
+The fixture is git-ignored (`*.dll`) so it cannot be committed by accident.
+
+**How it works under the hood:**
+
+`hooks.c` and `pattern_matcher.c` use a `NETWORKFIX_TEST` define to:
+- Make `real_recv`, `real_send`, and `real_srv_gameStreamReader` externally
+  writable so tests can install scripted mocks instead of MinHook trampolines.
+- Redirect `Sleep(SEND_RETRY_DELAY_MS)` to a test-side counter so retry loops
+  don't burn wallclock.
+- Short-circuit `is_caller_from_server()` to TRUE so the hooks always run
+  their full logic.
+- Expose `find_pattern_in_memory` and `validate_function_prologue` for direct
+  testing (they are `static` in production builds).
+
+Logging is left wired in. `logf` early-returns when `g_logctx` is uninitialized,
+so the test binary never opens `hook_log.txt`.
+
+**Adding a new test:**
+
+1. Add a `static void test_xxx(void)` function in `test/test_hooks.c`.
+2. Use `CHECK(cond, "msg %d", arg)` for assertions; failures bump `g_failures`
+   without aborting, so all tests run every invocation.
+3. Add a `printf("[test] test_xxx\n"); test_xxx();` line to `main()`.
+4. Run `make test`.
 
 ### Testing on Different Versions
 

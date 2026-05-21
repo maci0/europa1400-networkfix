@@ -66,15 +66,23 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
     DWORD hashSize = sizeof(hashBytes);
     if (CryptGetHashParam(hHash, HP_HASHVAL, hashBytes, &hashSize, 0))
     {
-        logf("[SHA256] Hash calculation successful, converting to hex string");
-        // Convert to hex string
-        for (DWORD i = 0; i < hashSize && (i * 2 + 1) < output_size; i++)
+        // Need 2 chars per byte + terminator
+        if (output_size < (size_t)hashSize * 2 + 1)
         {
-            sprintf(hash_output + (i * 2), "%02x", hashBytes[i]);
+            logf("[SHA256] Output buffer too small (%zu bytes, need %lu)", output_size,
+                 (unsigned long)hashSize * 2 + 1);
         }
-        hash_output[hashSize * 2] = '\0';
-        result = TRUE;
-        logf("[SHA256] Hash conversion completed successfully");
+        else
+        {
+            logf("[SHA256] Hash calculation successful, converting to hex string");
+            for (DWORD i = 0; i < hashSize; i++)
+            {
+                sprintf(hash_output + (i * 2), "%02x", hashBytes[i]);
+            }
+            hash_output[hashSize * 2] = '\0';
+            result = TRUE;
+            logf("[SHA256] Hash conversion completed successfully");
+        }
     }
     else
     {

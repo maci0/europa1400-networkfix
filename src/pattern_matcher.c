@@ -12,6 +12,12 @@
 #include <string.h>
 #include <windows.h>
 
+#ifdef NETWORKFIX_TEST
+#define PATTERN_STATIC
+#else
+#define PATTERN_STATIC static
+#endif
+
 // Pattern for srv_gameStreamReader function based on disassembly analysis
 // Common signature across Steam and GOG versions:
 static const unsigned char SRV_GAMESTREAMREADER_PATTERN[] = {
@@ -59,8 +65,8 @@ static const unsigned char SRV_GAMESTREAMREADER_MASK[] = {
  * @param needle_size Size of the pattern in bytes
  * @return Offset from haystack start if found, or -1 if not found
  */
-static long find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size, const unsigned char *needle,
-                                   const unsigned char *mask, size_t needle_size)
+PATTERN_STATIC long find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size,
+                                           const unsigned char *needle, const unsigned char *mask, size_t needle_size)
 {
     if (!haystack || !needle || !mask || needle_size == 0 || haystack_size < needle_size)
     {
@@ -97,7 +103,7 @@ static long find_pattern_in_memory(const unsigned char *haystack, size_t haystac
  * @param module_size Size of the module for bounds checking
  * @return TRUE if validation passes, FALSE otherwise
  */
-static BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset, size_t module_size)
+PATTERN_STATIC BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset, size_t module_size)
 {
     if (rva_offset + 50 >= module_size) // Need at least 50 bytes for validation
     {

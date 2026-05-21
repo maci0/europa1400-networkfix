@@ -32,6 +32,20 @@ jobs:
           make clean
           make
 
+      - name: Install Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine wine32 xvfb
+
+      - name: Run integration tests
+        env:
+          WINEDEBUG: '-all'
+          DISPLAY: ':99'
+        run: |
+          Xvfb :99 -screen 0 1024x768x16 &
+          make test
+
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
