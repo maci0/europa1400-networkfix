@@ -78,6 +78,7 @@ The compiled plugins will be in:
 
 - `make` or `make all` - Build release version with optimizations
 - `make debug` - Build debug version with symbols and verbose logging
+- `make test` - Build and run the automated test suite under Wine (see [Testing](docs/development-guide.md#automated-testing))
 - `make clean` - Remove compiled binaries
 - `make format` - Format source code with clang-format
 - `make install` - Copy plugin to Wine installation (Linux only)
@@ -168,10 +169,26 @@ If issues persist, please create an issue on the [GitHub repository](https://git
 - Network configuration (VPN type, etc.)
 - Steps to reproduce the problem
 
-## Testing TODO
+## Testing
 
-- **Steam Version Testing**: Verify network stability improvements work correctly with Steam version (RVA 0x3720)
-- **GOG Version Testing**: Confirm GOG version compatibility and network fixes (RVA 0x3960) 
+### Automated tests
+
+Run the full suite (37+ tests) under Wine:
+
+```bash
+make test
+```
+
+Coverage spans `hook_recv` / `hook_send` retry semantics, the
+`srv_gameStreamReader` fixes, pattern matching, prologue validation, SHA256
+file hashing, and `game.ini` parsing. Drop a real `server.dll` in the repo
+root to also enable end-to-end integration tests (hash → version detection →
+pattern matcher → expected RVA); those four tests skip cleanly when the
+fixture is absent. See
+[Automated Testing](docs/development-guide.md#automated-testing) for details.
+
+### Manual testing TODO
+
 - **VPN Testing**: Test multiplayer sessions over VPNs (Hamachi, Radmin) to verify packet loss resilience
 - **Connection Recovery**: Test network interruption recovery and retry logic functionality
 - **Performance Impact**: Measure any performance impact from the network hooks during gameplay
