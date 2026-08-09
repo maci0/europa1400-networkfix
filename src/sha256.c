@@ -15,6 +15,11 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
     HANDLE     hFile = INVALID_HANDLE_VALUE;
     BOOL       result = FALSE;
 
+    if (!filepath || !hash_output || output_size == 0)
+    {
+        return FALSE;
+    }
+
     logf("[SHA256] Starting hash calculation for file");
 
     // Open file with permissive sharing to avoid Wine deadlock
@@ -28,11 +33,24 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
 
     logf("[SHA256] File opened successfully, handle: %p", (void *)hFile);
 
-    // Get crypto context
+    // Get crypto context - PROV_RSA_AES may be unavailable on older Windows;
+    // fall back to PROV_RSA_FULL if needed (both support CALG_SHA_256 on modern systems)
     if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT))
     {
-        logf("[SHA256] Failed to acquire crypto context, error: %lu", GetLastError());
-        goto cleanup;
+        DWORD err = GetLastError();
+        if (err == (DWORD)NTE_BAD_PROV_TYPE || err == (DWORD)NTE_PROV_TYPE_NOT_DEF)
+        {
+            if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
+            {
+                logf("[SHA256] Failed to acquire crypto context (both AES and FULL), error: %lu", GetLastError());
+                goto cleanup;
+            }
+        }
+        else
+        {
+            logf("[SHA256] Failed to acquire crypto context, error: %lu", err);
+            goto cleanup;
+        }
     }
     logf("[SHA256] Crypto context acquired successfully");
 
@@ -44,14 +62,23 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
     }
     logf("[SHA256] Hash object created successfully");
 
-    // Read and hash file in chunks
+    // Read and hash file in chunks - check ReadFile success to detect I/O errors
     BYTE  buffer[4096];
     DWORD bytesRead;
     DWORD totalBytesRead = 0;
 
     logf("[SHA256] Starting file read loop");
-    while (ReadFile(hFile, buffer, sizeof(buffer), &bytesRead, NULL) && bytesRead > 0)
+    BOOL read_ok = TRUE;
+    while (1)
     {
+        read_ok = ReadFile(hFile, buffer, sizeof(buffer), &bytesRead, NULL);
+        if (!read_ok)
+        {
+            logf("[SHA256] ReadFile failed, error: %lu", GetLastError());
+            goto cleanup;
+        }
+        if (bytesRead == 0)
+            break;
         totalBytesRead += bytesRead;
         if (!CryptHashData(hHash, buffer, bytesRead, 0))
         {

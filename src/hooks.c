@@ -35,8 +35,12 @@
 
 // Constants
 #define DEFAULT_SERVER_PATH "Server\\server.dll"
-#define SEND_MAX_RETRIES INT_MAX // Maximum retry attempts for send operations
-#define SEND_RETRY_DELAY_MS 1    // Delay between send retries (matches original)
+// Cap retries to avoid hanging the game thread forever on a persistently
+// full send buffer (peer not reading). 5000 * 1ms ≈ 5 s before we give
+// up with WSAETIMEDOUT — long enough for normal VPN jitter, finite
+// enough to avoid an INT_MAX busy-loop that overflows signed int.
+#define SEND_MAX_RETRIES 5000
+#define SEND_RETRY_DELAY_MS 1 // Delay between send retries (matches original)
 
 #ifdef NETWORKFIX_TEST
 // Test build: real_recv/real_send are externally writable mocks.
@@ -495,10 +499,18 @@ const char *get_server_path_from_ini(HMODULE hModule)
         return NULL;
     }
 
-    if (!PathCombineA(iniPath, iniPath, "game.ini"))
+    // PathCombineA does not support overlapping buffers (pszDest == pszDir).
+    // Use a temporary buffer to avoid undefined behavior (verified against
+    // MSDN: pszDest should not overlap pszDir/pszFile).
     {
-        logf("[CONFIG] Could not combine path with game.ini");
-        return NULL;
+        char combined[MAX_PATH];
+        if (!PathCombineA(combined, iniPath, "game.ini"))
+        {
+            logf("[CONFIG] Could not combine path with game.ini");
+            return NULL;
+        }
+        // Safe copy back to iniPath (combined was built from iniPath, no overflow)
+        strcpy(iniPath, combined);
     }
 
     // Use GetPrivateProfileStringA() to read from INI file
@@ -536,6 +548,11 @@ const char *get_server_path_from_ini(HMODULE hModule)
 static BOOL create_hook_api(const wchar_t *module, const char *function, void *hook_func, void **original_func,
                             const char *hook_name)
 {
+    if (!module || !function || !hook_func || !original_func)
+    {
+        logf("[HOOK] Invalid params for %s hook", hook_name ? hook_name : "(null)");
+        return FALSE;
+    }
     MH_STATUS status = MH_CreateHookApi(module, function, hook_func, original_func);
     if (status == MH_OK)
     {

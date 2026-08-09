@@ -58,6 +58,7 @@ void logf(const char *fmt, ...)
     // Validate timestamp length
     if (timestamp_len < 0 || timestamp_len >= (int)sizeof(timestamp))
     {
+        LeaveCriticalSection(&g_logctx.critical_section);
         return; // Timestamp formatting failed
     }
 
@@ -65,6 +66,7 @@ void logf(const char *fmt, ...)
     // Bounds-checked copy of timestamp
     if (timestamp_len >= (int)sizeof(buffer))
     {
+        LeaveCriticalSection(&g_logctx.critical_section);
         return; // Timestamp too long for buffer
     }
     memcpy(buffer, timestamp, timestamp_len);
@@ -78,6 +80,7 @@ void logf(const char *fmt, ...)
     // Handle vsnprintf return value correctly
     if (len < 0)
     {
+        LeaveCriticalSection(&g_logctx.critical_section);
         return; // Formatting error
     }
     if (len >= remaining_space)
@@ -155,10 +158,25 @@ bool init_logging(HMODULE hModule)
     InitializeCriticalSection(&g_logctx.critical_section);
     g_logctx.critical_section_initialized = true;
 
+    if (hModule == NULL)
+    {
+        return false;
+    }
+
     wchar_t dllPath[MAX_PATH];
-    GetModuleFileNameW(hModule, dllPath, MAX_PATH);
-    PathRemoveFileSpecW(dllPath);
-    wcscat_s(dllPath, MAX_PATH, L"\\hook_log.txt");
+    if (GetModuleFileNameW(hModule, dllPath, MAX_PATH) == 0)
+    {
+        return false;
+    }
+    // Check PathRemoveFileSpecW return value
+    if (!PathRemoveFileSpecW(dllPath))
+    {
+        return false;
+    }
+    if (wcscat_s(dllPath, MAX_PATH, L"\\hook_log.txt") != 0)
+    {
+        return false;
+    }
 
     g_logctx.log_file =
         CreateFileW(dllPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
