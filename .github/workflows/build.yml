@@ -4,11 +4,17 @@ on:
     branches:
       - main
       - 'release/**'
+    tags:
+      - 'v*'
   pull_request:
     branches:
       - main
       - 'release/**'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -16,26 +22,46 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Set up Zig
+      - name: Cache Zig
+        uses: actions/cache@v4
+        with:
+          path: ~/.zig
+          key: zig-0.16.0-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
+          restore-keys: |
+            zig-0.16.0-${{ runner.os }}-
+
+      - name: Set up Zig 0.16.0
         env:
           ZIG_VERSION: 0.16.0
         run: |
-          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
-          mkdir -p "$HOME/.zig"
-          tar -xJf /tmp/zig.tar.xz -C "$HOME/.zig" --strip-components=1
+          if [ -x "$HOME/.zig/zig" ]; then
+            echo "Zig cache hit"
+          else
+            curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+            mkdir -p "$HOME/.zig"
+            tar -xJf /tmp/zig.tar.xz -C "$HOME/.zig" --strip-components=1
+          fi
           echo "$HOME/.zig" >> "$GITHUB_PATH"
           "$HOME/.zig/zig" version
 
-      - name: Build asi
+      - name: Build ASI (release)
         run: |
           make clean
           make
+
+      - name: Verify ASI
+        run: |
+          test -f bin/networkfix.asi
+          ls -lh bin/networkfix.asi
+          sha256sum bin/networkfix.asi
+          file bin/networkfix.asi
 
       - name: Install Wine
         run: |
@@ -53,15 +79,28 @@ jobs:
 
       - name: Upload build artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts
+          name: build-artifacts-${{ github.sha }}
           path: bin/networkfix.asi
+          if-no-files-found: error
+          retention-days: 30
 
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v3
-        if: github.ref == 'refs/heads/main'
+      - name: Upload to GitHub Release (latest — rolling on main)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: Latest Build
+          prerelease: false
+          make_latest: false
+          generate_release_notes: false
           files: bin/networkfix.asi
+
+      - name: Publish versioned release (on tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/networkfix.asi
+          generate_release_notes: true
+          make_latest: true
