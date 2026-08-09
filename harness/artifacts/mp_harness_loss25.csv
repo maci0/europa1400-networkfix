@@ -1,0 +1,4 @@
+test,result,detail
+pattern,pass,rva found
+desync_invariant,pass,
+send_retry,pass,covered by test_hooks.exe
