@@ -310,9 +310,9 @@ BOOL is_caller_from_server(uintptr_t caller_addr)
 
 The plugin tries multiple methods to find the server function:
 
-1. **Pattern matching** - Search for instruction patterns
-2. **SHA256 lookup** - Match against known versions
-3. **Default fallback** - Use Steam version offset (0x3720)
+1. **Pattern matching** - `find_srv_gameStreamReader_by_pattern()` scans for `PUSH ECX … 0F 84/85` with wildcards
+2. **SHA256 fallback** - `calculate_file_sha256()` vs `known_versions[]` in `src/versions.c`
+3. **Fail closed** - returns `0` (no fallback RVA) and aborts init if both fail; check `hook_log.txt` for `Pattern matching failed` + `Unknown server.dll version`
 
 **To force a specific RVA:**
 
@@ -345,28 +345,14 @@ To add support for a new game version:
 
 2. **Find function RVA using Ghidra/IDA Pro**
 
-3. **Add to [src/versions.h](../src/versions.h):**
+3. **Add to [src/versions.c](../src/versions.c):**
    ```c
-   // New version hash
-   #define CUSTOM_VERSION_HASH "abcdef1234567890..."
-
-   // New version RVA
-   #define CUSTOM_VERSION_RVA 0x4000
+   // In src/versions.c known_versions[]:
+   {"My Version", "abcdef1234567890...", 0x4000},
    ```
+   Definition is in `src/versions.c`; `src/versions.h` only declares `extern const server_version_info_t known_versions[]`.
 
-4. **Register in known_versions array:**
-   ```c
-   static const struct {
-       const char *version_name;
-       const char *sha256_hash;
-       DWORD target_rva;
-   } known_versions[] = {
-       {"Steam (German)", STEAM_VERSION_HASH, STEAM_VERSION_RVA},
-       {"GOG", GOG_VERSION_HASH, GOG_VERSION_RVA},
-       {"Custom", CUSTOM_VERSION_HASH, CUSTOM_VERSION_RVA},  // Add here
-       {NULL, NULL, 0}
-   };
-   ```
+4. **Register:** edit `src/versions.c` `known_versions[]` array (see existing Steam/GOG entries).
 
 5. **Rebuild and test:**
    ```bash
