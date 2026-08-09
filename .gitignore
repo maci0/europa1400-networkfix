@@ -7,4 +7,7 @@
 bin/*
 dist/
 harness/logs/
+harness/dxwrapper/*.dll
+harness/artifacts/*.mp4
 .env
+!harness/artifacts/crash_dialog_dxwrapper.png

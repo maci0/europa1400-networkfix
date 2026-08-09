@@ -67,3 +67,18 @@ Drivers use `xdotool search/ windowactivate/ getwindowgeometry/ mousemove/ click
 - `GILDE/gilde-docker/Dockerfile:43` `/VERYSILENT /DIR=C:\Guild`, `game.ini` sed tweaks.
 - `GILDE/guild-network-test/run_netns.sh` (bridge + veth + netns + `tc qdisc netem`).
 - `GILDE/guild-network-test/setup.sh` (flatpak Wine silent install).
+
+## Video fix (POW2 bug)
+
+Europa1400 Gold has a D3D8 bug on modern Windows: `GetDeviceCaps` no longer
+reports `D3DPTEXTURECAPS_POW2` → `FN_allocate_image_surface 0x04770A0` mis-sizes
+surfaces → truncated UI. Fixed via dxwrapper (`elishacloud/dxwrapper`
+v1.7.8400.25 `dx8.games.zip` `6d301af…`, `D3d8to9=1` + `SetPOW2Caps=1`).
+
+This harness auto-installs it: `Dockerfile` downloads and verifies the zip,
+`entrypoint.sh` copies `d3d8.dll`/`dxwrapper.dll`/`dxwrapper.ini` to
+`C:\Guild`. Without it the game may crash at `0x42980D` on `wine 11.14`.
+
+Local native run: `./harness/dxwrapper/fetch.sh` fetches the DLLs, or
+copy to `GILDE/guild-network-test/wpf*/drive_c/Guild/` manually.
+
