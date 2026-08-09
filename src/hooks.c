@@ -248,11 +248,56 @@ static BOOL init_server_module(void)
         serverPath = DEFAULT_SERVER_PATH;
     }
 
-    // Load, validate, and detect version
+    // TOCTOU mitigation: hash the file before LoadLibrary when we have a filesystem path,
+    // then verify after load that the mapped image matches (pattern match is primary).
+    // If file can't be hashed pre-load, fall back to post-load detection only.
+    char preHash[65] = {0};
+    BOOL hasPreHash = FALSE;
+    {
+        // Build absolute file path for pre-hash (best-effort)
+        char moduleDir[MAX_PATH] = {0};
+        char filePath[MAX_PATH] = {0};
+        if (GetModuleFileNameA(g_hModule, moduleDir, sizeof(moduleDir)) != 0 &&
+            PathRemoveFileSpecA(moduleDir) && PathCombineA(filePath, moduleDir, serverPath))
+        {
+            wchar_t wpath[MAX_PATH];
+            if (MultiByteToWideChar(CP_ACP, 0, filePath, -1, wpath, MAX_PATH) != 0)
+            {
+                if (calculate_file_sha256(wpath, preHash, sizeof(preHash)))
+                {
+                    hasPreHash = TRUE;
+                    logf("[HOOK] Pre-load SHA256: %s", preHash);
+                    // Optional allowlist: if hash known, we know it's whitelisted; if not,
+                    // we still allow load but pattern matcher must succeed post-load.
+                }
+            }
+        }
+    }
+
+    // Load, validate, and detect version (pattern matcher does post-load validation)
     if (!load_server_dll(serverPath) || (g_server_rva = detect_server_version()) == 0)
     {
         reset_server_globals();
         return FALSE;
+    }
+
+    // Verify pre-hash matches post-load hash if we had one (detect TOCTOU replacement)
+    if (hasPreHash)
+    {
+        wchar_t loadedPath[MAX_PATH];
+        if (GetModuleFileNameW(g_hServerDll, loadedPath, MAX_PATH) != 0)
+        {
+            char postHash[65] = {0};
+            if (calculate_file_sha256(loadedPath, postHash, sizeof(postHash)))
+            {
+                if (strcmp(preHash, postHash) != 0)
+                {
+                    logf("[HOOK] Hash mismatch pre/post load: %s != %s — possible replacement, aborting", preHash, postHash);
+                    reset_server_globals();
+                    return FALSE;
+                }
+            }
+        }
     }
 
     // Get module information for range checking

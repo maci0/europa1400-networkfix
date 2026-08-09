@@ -172,14 +172,16 @@ if (ret < 0) {
 
 ## Version Detection
 
-The current implementation uses a fixed RVA (0x3720) which works for the German Steam version. For broader compatibility, version detection may be needed:
+The current implementation tries pattern matching first (see `src/pattern_matcher.c: find_srv_gameStreamReader_by_pattern`),
+then SHA256 hash lookup against `src/versions.c: known_versions[]`, and fails closed (returns `0`) if both miss:
 
 ```c
-// Detect server.dll version by hash or signature
-static DWORD detect_server_version(HMODULE hServer) {
-    // Calculate hash or check known signatures
-    // Return appropriate RVA offset
-}
+// src/hooks.c: detect_server_version()
+DWORD pattern_rva = 0;
+if (find_srv_gameStreamReader_by_pattern(hServer, &pattern_rva) == PATTERN_MATCH_SUCCESS)
+    return pattern_rva;
+for (i in known_versions) if (strcmp(hash, known_versions[i].sha256_hash)==0) return known_versions[i].target_rva;
+return 0; // unknown -> abort
 ```
 
 ## Testing Notes
@@ -190,13 +192,10 @@ static DWORD detect_server_version(HMODULE hServer) {
 
 ## Future Work
 
-1. **Map GOG version**: Find equivalent function location
-2. **Version detection**: Implement automatic RVA detection
-3. **Signature analysis**: Document function signatures across versions
-4. **Compatibility matrix**: Test hook across all game editions
+1. **Localized Gold Edition**: analyze/add to `src/versions.c` if found.
+2. **Compatibility matrix**: Test hook across all game editions (pattern-first covers unknowns).
 
 ---
 
-**Last Updated**: Based on Ghidra decompilation analysis  
-**Primary Version**: German Steam Edition  
-**Status**: Production-ready for German Steam version
+**Last Updated**: 2026-08-09 — rizin-validated (`GOG 0x3960`, `Steam 0x3720`, `pattern 51 8B 4C 24 0C … 8B 45 38` + `JE/JNE` bounds, `6d301af` dxwrapper)
+**Status**: Production-ready for GOG + German Steam; unknown versions handled via pattern search.
