@@ -145,6 +145,12 @@ The compiled plugins will be in:
   - Look for Windows Event Viewer entries if initialization fails
   - Ensure game directory isn't read-only
 
+#### Loading Screen Hangs for Minutes, Then Recovers
+- **Symptoms:** Starting/loading a multiplayer game (even localhost/LAN) freezes the loading screen for 1–3 minutes before suddenly finishing. No OOS error.
+- **Cause:** Verified 2026-08-09 with the `harness/` Xvfb + xdotool harness: `src/hooks.c:hook_send` retries `WSAEWOULDBLOCK` with `Sleep(1)` on the UI thread (up to `5000` retries ≙ ~5 s per `send` call, many calls during save/map sync). While in that loop, no `PeekMessage/DispatchMessage` is pumped, so the progress dialog appears hung; localhost fills the loopback window just as fast as VPN.
+- **Workaround:** Wait — the transfer eventually completes and the fix then works (no OOS). Use `harness/netem.sh --clear` and `GILDE` local setup to confirm harness logs.
+- **Future fix:** Pump messages in the retry loop (e.g. `PeekMessage` + `Translate/Dispatch`) or move `send` retry off the UI thread.
+
 ### Log Analysis
 
 The `hook_log.txt` file contains detailed information:

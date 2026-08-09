@@ -46,6 +46,13 @@ The game doesn't handle partial send operations properly:
 - No retry logic for `WSAEWOULDBLOCK` on send operations
 - Leads to incomplete packet transmission
 
+**Harness note (verified 2026-08-09):** even on localhost, the multiplayer loading screen hangs for minutes
+before suddenly completing. Root cause is `src/hooks.c:473` — `hook_send` blocks the UI thread in a
+tight `while(total<len && retry<5000){ real_send; if(WSAEWOULDBLOCK){ Sleep(1); continue; } }` loop
+during the initial save/map sync. While looping, no `GetMessage/DispatchMessage` is pumped, so the
+progress dialog freezes (localhost fills the loopback TCP window just like VPN). The game unblocks
+only after the peer drains (~5 s per `send` × many chunks). See also `src/hooks.c:42 SEND_MAX_RETRIES`.
+
 ### 4. Timer Synchronization Assumptions
 
 The game uses `GetTickCount()` for network synchronization:
