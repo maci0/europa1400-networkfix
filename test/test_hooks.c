@@ -208,6 +208,7 @@ static void test_recv_propagates_other_errors(void)
     int  r = hook_recv((SOCKET)1, buf, sizeof(buf), 0);
 
     CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR, got %d", r);
+    CHECK(WSAGetLastError() == WSAECONNRESET, "expected WSAECONNRESET preserved, got %d", WSAGetLastError());
 }
 
 /* send: send buffer full N times, then drains. All bytes sent, retries logged. */
@@ -287,6 +288,33 @@ static void test_send_retry_counter_resets(void)
 
     CHECK(r == 4, "expected 4 bytes, got %d", r);
     CHECK(g_sleep_calls == 8, "expected 8 sleeps (2 per chunk x 4), got %d", g_sleep_calls);
+}
+
+/* send: non-server caller bypasses retry — raw WSAEWOULDBLOCK propagates */
+static void test_send_non_server_passthrough(void)
+{
+    extern BOOL g_test_force_caller_server;
+    g_test_force_caller_server = FALSE;
+    g_send_script.block_count = 3;
+    g_send_script.chunk_size = 10;
+    const char *msg = "abcdefghij";
+    int r = hook_send((SOCKET)1, msg, 10, 0);
+    CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR on non-server passthrough, got %d", r);
+    CHECK(WSAGetLastError() == WSAEWOULDBLOCK, "expected WSAEWOULDBLOCK preserved, got %d", WSAGetLastError());
+    CHECK(g_sleep_calls == 0, "expected 0 sleeps on passthrough, got %d", g_sleep_calls);
+    g_test_force_caller_server = TRUE;
+}
+
+static void test_recv_non_server_passthrough(void)
+{
+    extern BOOL g_test_force_caller_server;
+    g_test_force_caller_server = FALSE;
+    g_recv_script.block_count = 1;
+    char buf[64];
+    int r = hook_recv((SOCKET)1, buf, sizeof(buf), 0);
+    CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR passthrough, got %d", r);
+    CHECK(WSAGetLastError() == WSAEWOULDBLOCK, "expected WSAEWOULDBLOCK preserved, got %d", WSAGetLastError());
+    g_test_force_caller_server = TRUE;
 }
 
 /* ---- srv_gameStreamReader mock + tests ---- */
@@ -476,15 +504,42 @@ static void test_validate_rejects_when_too_close_to_end(void)
 
 /* ---- SHA256 tests ---- */
 
+static BOOL make_temp_path(wchar_t *out, size_t out_chars)
+{
+    wchar_t tmpDir[MAX_PATH];
+    DWORD len = GetTempPathW(MAX_PATH, tmpDir);
+    if (len == 0 || len >= MAX_PATH)
+        return FALSE;
+    wchar_t tmpFile[MAX_PATH];
+    if (GetTempFileNameW(tmpDir, L"nfx", 0, tmpFile) == 0)
+        return FALSE;
+    // GetTempFileName creates the file — we want caller to control; delete it and return path
+    DeleteFileW(tmpFile);
+    if (wcslen(tmpFile) >= out_chars)
+        return FALSE;
+    wcscpy(out, tmpFile);
+    return TRUE;
+}
+
 static BOOL write_temp_file(const wchar_t *path, const void *data, DWORD size)
 {
-    HANDLE h = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE)
         return FALSE;
     DWORD written = 0;
-    BOOL  ok = WriteFile(h, data, size, &written, NULL) && written == size;
+    BOOL ok = TRUE;
+    if (size > 0)
+        ok = WriteFile(h, data, size, &written, NULL) && written == size;
     CloseHandle(h);
     return ok;
+}
+
+static BOOL write_temp_file_tmp(const void *data, DWORD size, wchar_t *out_path, size_t out_size)
+{
+    if (!make_temp_path(out_path, out_size))
+        return FALSE;
+    return write_temp_file(out_path, data, size);
 }
 
 static BOOL is_lowercase_hex_64(const char *s)
@@ -501,10 +556,9 @@ static BOOL is_lowercase_hex_64(const char *s)
 /* Round-trip: same input -> same hash, different input -> different hash. */
 static void test_sha256_deterministic_and_collision_free_for_distinct_inputs(void)
 {
-    const wchar_t *p1 = L"test_sha_a.bin";
-    const wchar_t *p2 = L"test_sha_b.bin";
-    CHECK(write_temp_file(p1, "hello world", 11) == TRUE, "could not write temp file p1");
-    CHECK(write_temp_file(p2, "hello world!", 12) == TRUE, "could not write temp file p2");
+    wchar_t p1[MAX_PATH], p2[MAX_PATH];
+    CHECK(write_temp_file_tmp("hello world", 11, p1, MAX_PATH) == TRUE, "could not write temp file p1");
+    CHECK(write_temp_file_tmp("hello world!", 12, p2, MAX_PATH) == TRUE, "could not write temp file p2");
 
     char h1[65] = {0}, h1_again[65] = {0}, h2[65] = {0};
     CHECK(calculate_file_sha256(p1, h1, sizeof(h1)) == TRUE, "hash p1 failed");
@@ -521,13 +575,16 @@ static void test_sha256_deterministic_and_collision_free_for_distinct_inputs(voi
 
 static void test_sha256_empty_file(void)
 {
-    const wchar_t *path = L"test_sha_empty.bin";
-    CHECK(write_temp_file(path, "", 0) == TRUE, "could not write temp file");
+    wchar_t path[MAX_PATH];
+    CHECK(write_temp_file_tmp("", 0, path, MAX_PATH) == TRUE, "could not write temp file");
 
     char hash[65] = {0};
     BOOL ok = calculate_file_sha256(path, hash, sizeof(hash));
     CHECK(ok == TRUE, "calculate_file_sha256 failed");
     CHECK(is_lowercase_hex_64(hash), "hash not 64 lowercase hex chars: %s", hash);
+    // Known SHA256 of empty file per FIPS-180
+    CHECK(strcmp(hash, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") == 0,
+          "empty file hash mismatch: %s", hash);
 
     DeleteFileW(path);
 }
@@ -541,8 +598,8 @@ static void test_sha256_missing_file_returns_false(void)
 
 static void test_sha256_undersized_buffer_returns_false(void)
 {
-    const wchar_t *path = L"test_sha_small_buf.bin";
-    CHECK(write_temp_file(path, "abc", 3) == TRUE, "could not write temp file");
+    wchar_t path[MAX_PATH];
+    CHECK(write_temp_file_tmp("abc", 3, path, MAX_PATH) == TRUE, "could not write temp file");
 
     char hash[10] = {0}; /* too small for 64-char hex + NUL */
     BOOL ok = calculate_file_sha256(path, hash, sizeof(hash));
@@ -798,6 +855,8 @@ int main(void)
     RUN(test_send_connaborted_zero_progress);
     RUN(test_send_zero_indicates_closed);
     RUN(test_send_retry_counter_resets);
+    RUN(test_send_non_server_passthrough);
+    RUN(test_recv_non_server_passthrough);
 
     RUN(test_srv_null_ctx_returns_minus_one);
     RUN(test_srv_negative_ctx_e_is_zeroed);

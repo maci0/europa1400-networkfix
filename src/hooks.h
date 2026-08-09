@@ -12,6 +12,9 @@ void cleanup_hooks(void);
 
 // Server module range detection
 BOOL is_caller_from_server(uintptr_t caller_addr);
+#ifdef NETWORKFIX_TEST
+extern BOOL g_test_force_caller_server;
+#endif
 
 // Hook implementations
 int WSAAPI   hook_recv(SOCKET s, char *buf, int len, int flags);

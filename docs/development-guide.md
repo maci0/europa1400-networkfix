@@ -20,9 +20,9 @@ This guide covers everything needed to build, modify, debug, and contribute to t
 ### Windows Development
 
 **Required Tools:**
-- [Zig](https://ziglang.org/download/) 0.11.0 or later
+- [Zig](https://ziglang.org/download/) 0.16.0 (pinned — `make check-zig` verifies, CI caches `~/.zig`)
 - [Make for Windows](http://gnuwin32.sourceforge.net/packages/make.htm) or use Git Bash
-- [clang-format](https://releases.llvm.org/download.html) (optional, for code formatting)
+- [clang-format](https://releases.llvm.org/download.html) (optional — `make format` / `make lint`)
 
 **Recommended IDEs:**
 - Visual Studio Code with C/C++ extension
@@ -47,11 +47,12 @@ sudo apt-get install make clang-format git
 # Arch Linux
 sudo pacman -S make clang git
 
-# Install Zig
-curl -O https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
-tar -xf zig-linux-x86_64-0.11.0.tar.xz
-sudo mv zig-linux-x86_64-0.11.0 /opt/zig
+# Install Zig 0.16.0 (must match Makefile:ZIG_VERSION_EXPECTED)
+curl -O https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+tar -xf zig-x86_64-linux-0.16.0.tar.xz
+sudo mv zig-x86_64-linux-0.16.0 /opt/zig
 export PATH=$PATH:/opt/zig
+zig version  # must print 0.16.0 or `make check-zig` will fail
 ```
 
 **Testing on Linux:**
@@ -141,7 +142,7 @@ LDFLAGS := -lc -lws2_32 -lshlwapi -ladvapi32 -lcustomlib
 - **Solution:** Initialize submodules: `git submodule update --init --recursive`
 
 **Problem:** MinHook compilation errors
-- **Solution:** Ensure using Zig 0.11.0+, check submodule is at correct commit
+- **Solution:** Ensure using Zig 0.16.0 (pinned), check submodule is at correct commit: `zig version` must match `Zig 0.16.0`
 
 **Problem:** `make: command not found` on Windows
 - **Solution:** Use Git Bash or install Make for Windows

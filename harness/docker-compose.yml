@@ -1,0 +1,63 @@
+services:
+  gilde-host:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gilde-harness:latest
+    container_name: gilde-host
+    hostname: gilde-host
+    environment:
+      - ROLE=host
+      - DISPLAY=:99
+      - WINEPREFIX=/home/gilde/pfx
+      - DRIVER=auto
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./logs/host:/home/gilde/logs
+      - ../bin/networkfix.asi:/harness/networkfix.asi:ro
+      # Mount installer cache if you want baked install: uncomment and place installer next to compose
+      # - ./setup_the_guild_gold_2.0.0.5.exe:/home/gilde/setup_the_guild_gold_2.0.0.5.exe:ro
+      # Mount game prefix from reference guild-network-test (host path) or let entrypoint use baked pfx
+      # Example: reuse guild-network-test prefixes (flatpak Wine) not recommended inside Docker; prefer baked pfx.
+    networks:
+      gilde-net:
+        ipv4_address: 10.10.0.2
+    shm_size: 512m
+    stdin_open: true
+    tty: true
+
+  gilde-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gilde-harness:latest
+    container_name: gilde-client
+    hostname: gilde-client
+    environment:
+      - ROLE=client
+      - HOST_IP=gilde-host
+      - DISPLAY=:99
+      - WINEPREFIX=/home/gilde/pfx
+      - DRIVER=auto
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./logs/client:/home/gilde/logs
+      - ../bin/networkfix.asi:/harness/networkfix.asi:ro
+    networks:
+      gilde-net:
+        ipv4_address: 10.10.0.3
+    shm_size: 512m
+    stdin_open: true
+    tty: true
+    depends_on:
+      - gilde-host
+
+networks:
+  gilde-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.0.0/24
+          gateway: 10.10.0.1

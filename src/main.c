@@ -12,6 +12,7 @@
 
 // Global module handle for configuration access
 HMODULE g_hModule = NULL;
+static HANDLE g_hInitThread = NULL;
 
 /**
  * Initialization thread procedure that sets up logging and hooks.
@@ -27,10 +28,12 @@ HMODULE g_hModule = NULL;
  */
 static DWORD WINAPI init_thread(LPVOID lpParam)
 {
+    (void)lpParam;
     // Initialize hook system
     if (!init_hooks())
     {
-        logf("[HOOK] Hook initialization failed");
+        logf("[HOOK] Hook initialization failed — game will run without network fix");
+        OutputDebugStringA("[HOOK] Hook initialization failed — running without fix.\n");
         return 1;
     }
 
@@ -73,11 +76,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
         }
 
         // Create initialization thread to avoid DllMain deadlock issues
-        // Uses CreateThread() and CloseHandle() for proper resource management
-        HANDLE hThread = CreateThread(NULL, 0, init_thread, NULL, 0, NULL);
-        if (hThread)
+        g_hInitThread = CreateThread(NULL, 0, init_thread, NULL, 0, NULL);
+        if (g_hInitThread)
         {
-            CloseHandle(hThread);
+            // Keep handle for join on detach; don't close here
         }
         else
         {
@@ -88,6 +90,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
         break;
 
     case DLL_PROCESS_DETACH:
+        // Ensure init thread finished before tearing down hooks/logging
+        if (g_hInitThread)
+        {
+            WaitForSingleObject(g_hInitThread, 2000);
+            CloseHandle(g_hInitThread);
+            g_hInitThread = NULL;
+        }
         logf("[HOOK] DLL detaching from process");
 
         // Clean up hooks and logging

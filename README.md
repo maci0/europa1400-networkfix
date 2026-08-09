@@ -48,7 +48,7 @@ By applying surgical fixes only to problematic functions, the plugin adds proper
 
 ### Prerequisites
 
-- [Zig](https://ziglang.org/) (version 0.11.0 or later) - Cross-platform C compiler
+- [Zig](https://ziglang.org/) (version 0.16.0, pinned in `Makefile:ZIG_VERSION_EXPECTED` and `.github/workflows/build.yml`) - Cross-platform C compiler
 - [make](https://www.gnu.org/software/make/) - Build automation
 - [clang-format](https://clang.llvm.org/docs/ClangFormat.html) (optional) - Code formatting
 
