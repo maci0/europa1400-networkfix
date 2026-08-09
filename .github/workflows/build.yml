@@ -90,19 +90,8 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  release-latest:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
-      - uses: actions/download-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: build-artifacts-${{ github.sha }}
-          path: bin
       - name: Upload to GitHub Release (latest — rolling on main)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.3.2
         with:
           tag_name: latest
@@ -112,36 +101,16 @@ jobs:
           generate_release_notes: false
           files: bin/networkfix.asi
 
-  release-versioned:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      attestations: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
-      - uses: actions/download-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: build-artifacts-${{ github.sha }}
-          path: bin
-      - name: Build release archive
-        run: |
-          make dist
-          ls -lh dist/
-          cat dist/*.sha256
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: dist/networkfix-*.zip
       - name: Publish versioned release (on tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.3.2
         with:
-          files: |
-            bin/networkfix.asi
-            dist/networkfix-*.zip
-            dist/networkfix-*.sha256
-            dist/sbom.json
+          files: bin/networkfix.asi
           generate_release_notes: true
           make_latest: true
+
+      - name: Attest build provenance (on tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: bin/networkfix.asi
