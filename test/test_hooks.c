@@ -421,12 +421,14 @@ static void build_valid_prologue(unsigned char *blob, size_t blob_size, int32_t 
 {
     memset(blob, 0x90, blob_size); /* NOP filler */
     blob[0] = 0x51;                /* PUSH ECX */
-    blob[18] = 0x0F;
-    blob[19] = 0x84;
-    memcpy(blob + 20, &jz_rel, sizeof(jz_rel));
-    blob[28] = 0x0F;
-    blob[29] = 0x85;
-    memcpy(blob + 30, &jnz_rel, sizeof(jnz_rel));
+    /* JZ at offset 17 (0F 84 rel32) operand at 19-22, next instr at 23 */
+    blob[17] = 0x0F;
+    blob[18] = 0x84;
+    memcpy(blob + 19, &jz_rel, sizeof(jz_rel));
+    /* JNZ at offset 27 (0F 85 rel32) operand at 29-32, next instr at 33 */
+    blob[27] = 0x0F;
+    blob[28] = 0x85;
+    memcpy(blob + 29, &jnz_rel, sizeof(jnz_rel));
 }
 
 static void test_validate_accepts_in_bounds_prologue(void)
@@ -714,7 +716,7 @@ static void run_fixture_tests(const wchar_t *fixture_path)
     };
     const unsigned char mask[] = {
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0xFF, 0x00, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
         0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
     };
     if (mi.SizeOfImage > 0)
