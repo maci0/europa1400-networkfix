@@ -43,11 +43,24 @@ if [[ -f "$GAME_INI" ]]; then
   echo "[entrypoint] Patched $GAME_INI" | tee -a "$LOG_DIR/entrypoint.log"
 fi
 
-# --- copy harness ASI into game dir (volume-mounted or baked) ---
+# --- copy harness ASI + dxwrapper POW2 fix into game dir ---
 HARNESS_ASI_SRC="/harness/networkfix.asi"
 if [[ -f "$HARNESS_ASI_SRC" ]]; then
   cp -f "$HARNESS_ASI_SRC" "$WINEPREFIX/drive_c/Guild/networkfix.asi" 2>/dev/null || cp -f "$HARNESS_ASI_SRC" ./networkfix.asi || true
   echo "[entrypoint] Installed $HARNESS_ASI_SRC" | tee -a "$LOG_DIR/entrypoint.log"
+fi
+# dxwrapper D3D8 POW2 fix (elishacloud/dxwrapper v1.7.8400.25, SetPOW2Caps=1)
+# Fixes Gold-Guild-Patch UI bug: missing D3DCAPS8.TextureCaps POW2 on Win10+ → mis-sized surfaces
+for f in d3d8.dll dxwrapper.dll dxwrapper.ini; do
+  if [[ -f "/harness/$f" ]]; then
+    cp -f "/harness/$f" "$WINEPREFIX/drive_c/Guild/$f" 2>/dev/null || cp -f "/harness/$f" "./$f" || true
+    echo "[entrypoint] Installed dxwrapper $f" | tee -a "$LOG_DIR/entrypoint.log"
+  fi
+done
+# Also support harness-provided dxwrapper.fixed.ini as override
+if [[ -f "/harness/dxwrapper.fixed.ini" ]]; then
+  cp -f "/harness/dxwrapper.fixed.ini" "$WINEPREFIX/drive_c/Guild/dxwrapper.ini" 2>/dev/null || true
+  echo "[entrypoint] Installed dxwrapper.fixed.ini -> dxwrapper.ini" | tee -a "$LOG_DIR/entrypoint.log"
 fi
 
 # --- start Xvfb ---
