@@ -89,18 +89,18 @@ These constants are defined in source files and require recompilation to change.
 
 ### Network Retry Settings
 
-Defined in [src/hooks.c:38-39](../src/hooks.c#L38-L39):
+Defined in [src/hooks.c:42-43](../src/hooks.c#L42-L43):
 
 ```c
-#define SEND_MAX_RETRIES INT_MAX    // Maximum retry attempts
-#define SEND_RETRY_DELAY_MS 1       // Delay between retries in milliseconds
+#define SEND_MAX_RETRIES 5000 // ~5s at 1ms delay before WSAETIMEDOUT
+#define SEND_RETRY_DELAY_MS 1 // Delay between send retries
 ```
 
 **SEND_MAX_RETRIES:**
 - Controls how many times `send()` retries on `WSAEWOULDBLOCK`
-- Default: `INT_MAX` (effectively unlimited retries)
+- Default: `5000` (~5 s, then `WSAETIMEDOUT`; was `INT_MAX` infinite)
 - Recommended values:
-  - `INT_MAX` - Never give up (default, safest)
+  - `5000` - Default, balances VPN resilience and hang detection
   - `100` - Up to 100 retries (~100ms total)
   - `1000` - Up to 1000 retries (~1s total)
   - `10` - Give up quickly for debugging
@@ -212,10 +212,10 @@ Currently, there are no runtime log levels. All log messages are written.
 
 Some log messages use rate limiting to prevent spam:
 
-Defined in [src/logging.h:18](../src/logging.h#L18):
+Defined in [src/logging.h:17](../src/logging.h#L17):
 
 ```c
-#define LOG_RATE_LIMIT_MS 1000
+#define LOG_RATE_LIMIT_MS 5000 // 5s rate-limit window
 ```
 
 **Purpose:** Minimum time (ms) between repeated log messages.
@@ -225,7 +225,7 @@ Defined in [src/logging.h:18](../src/logging.h#L18):
 logf_rate_limited("recv_error", "[WS2 HOOK] recv error: %d", error);
 ```
 
-Only logs once per second even if called thousands of times.
+Only logs once per 5 seconds even if called thousands of times (see `src/logging.c:215-273`).
 
 ## Network Behavior Tuning
 
@@ -413,8 +413,8 @@ For very unstable networks (poor WiFi, high latency VPN):
 
 **Edit [src/hooks.c](../src/hooks.c):**
 ```c
-#define SEND_MAX_RETRIES INT_MAX     // Never give up
-#define SEND_RETRY_DELAY_MS 5        // Wait 5ms between tries
+#define SEND_MAX_RETRIES 5000 // ~5s, raise for lossier links
+#define SEND_RETRY_DELAY_MS 5 // Wait 5ms between tries
 ```
 
 **Build:**
@@ -518,7 +518,7 @@ make clean && make debug
 **Symptoms:** Still getting "Out of Sync" errors
 
 **Solution:**
-- Increase `SEND_MAX_RETRIES` to `INT_MAX`
+- Increase `SEND_MAX_RETRIES` to `5000` or higher (e.g. `10000`)
 - Reduce `SEND_RETRY_DELAY_MS` to 1 or 0
 - Verify hooks are actually being called (check logs)
 - Test with debug build for verbose logging

@@ -163,9 +163,57 @@ static int get_available_bytes(SOCKET s)
  * @param serverPath Path to server.dll to load
  * @return TRUE if loaded successfully, FALSE on error
  */
+static BOOL is_safe_server_path(const char *path)
+{
+    if (!path || !path[0]) return FALSE;
+    // Reject absolute paths (drive letter, UNC, leading slash)
+    if (path[1] == ':' || path[0] == '\\' || path[0] == '/') return FALSE;
+    // Reject traversal
+    if (strstr(path, "..")) return FALSE;
+    // Restrict to .dll files
+    size_t len = strlen(path);
+    if (len < 4 || _stricmp(path + len - 4, ".dll") != 0) return FALSE;
+    return TRUE;
+}
+
 static BOOL load_server_dll(const char *serverPath)
 {
     logf("[HOOK] Loading server.dll from: %s", serverPath);
+    if (!is_safe_server_path(serverPath))
+    {
+        logf("[HOOK] Rejected unsafe server path: %s", serverPath);
+        return FALSE;
+    }
+    // Verify canonical path stays within game dir
+    char moduleDir[MAX_PATH] = {0};
+    if (GetModuleFileNameA(g_hModule, moduleDir, sizeof(moduleDir)) != 0)
+    {
+        PathRemoveFileSpecA(moduleDir);
+        char combined[MAX_PATH] = {0}, full[MAX_PATH] = {0}, canonical[MAX_PATH] = {0};
+        if (PathCombineA(combined, moduleDir, serverPath) &&
+            GetFullPathNameA(combined, sizeof(full), full, NULL) &&
+            GetFullPathNameA(full, sizeof(canonical), canonical, NULL))
+        {
+            // Must be under game dir
+            char gameDirCanonical[MAX_PATH] = {0};
+            GetFullPathNameA(moduleDir, sizeof(gameDirCanonical), gameDirCanonical, NULL);
+            size_t glen = strlen(gameDirCanonical);
+            if (_strnicmp(canonical, gameDirCanonical, glen) != 0)
+            {
+                logf("[HOOK] Rejected path outside game dir: %s -> %s", serverPath, canonical);
+                return FALSE;
+            }
+            logf("[HOOK] Canonical server path: %s", canonical);
+            g_hServerDll = LoadLibraryA(canonical);
+            if (!g_hServerDll)
+            {
+                logf("[HOOK] Failed to load server.dll (error: %lu)", GetLastError());
+                return FALSE;
+            }
+            logf("[HOOK] Server.dll loaded at %p", (void *)g_hServerDll);
+            return TRUE;
+        }
+    }
     g_hServerDll = LoadLibraryA(serverPath);
     if (!g_hServerDll)
     {
@@ -173,7 +221,7 @@ static BOOL load_server_dll(const char *serverPath)
         logf("[HOOK] Failed to load server.dll (error: %lu)", error);
         return FALSE;
     }
-    Sleep(100); // avoid a race condition when loading the library while the game initialization hasn't quite finished
+    // No Sleep(100) — LoadLibrary is synchronous; original race comment not reproducible.
     logf("[HOOK] Server.dll loaded at %p", (void *)g_hServerDll);
     return TRUE;
 }
@@ -235,9 +283,15 @@ static BOOL init_server_module(void)
  * @param caller_addr Address to check
  * @return TRUE if caller is from server.dll, FALSE otherwise
  */
+#ifdef NETWORKFIX_TEST
+BOOL g_test_force_caller_server = TRUE; // test hook to exercise non-server path
+#endif
+
 BOOL is_caller_from_server(uintptr_t caller_addr)
 {
 #ifdef NETWORKFIX_TEST
+    if (!g_test_force_caller_server)
+        return FALSE;
     (void)caller_addr;
     return TRUE;
 #else
@@ -514,14 +568,21 @@ const char *get_server_path_from_ini(HMODULE hModule)
     }
 
     // Use GetPrivateProfileStringA() to read from INI file
-    DWORD len = GetPrivateProfileStringA("Network", "Server",
+    // Support both ServerPath (documented) and Server (legacy) keys for backwards compat.
+    DWORD len = GetPrivateProfileStringA("Network", "ServerPath",
                                          "", // Default value
                                          serverPath, sizeof(serverPath), iniPath);
+    if (len == 0)
+    {
+        len = GetPrivateProfileStringA("Network", "Server",
+                                       "", // Fallback legacy key
+                                       serverPath, sizeof(serverPath), iniPath);
+    }
 
     if (len > 0)
     {
-        // Remove quotes if present
-        if (serverPath[0] == '"' && serverPath[len - 1] == '"')
+        // Remove surrounding quotes if present (handles paths with spaces)
+        if (len >= 2 && serverPath[0] == '"' && serverPath[len - 1] == '"')
         {
             memmove(serverPath, serverPath + 1, len - 2);
             serverPath[len - 2] = '\0';
@@ -530,7 +591,7 @@ const char *get_server_path_from_ini(HMODULE hModule)
         return serverPath;
     }
 
-    logf("[CONFIG] Could not find 'Server' in '[Network]' section of %s", iniPath);
+    logf("[CONFIG] Could not find 'ServerPath'/'Server' in '[Network]' section of %s", iniPath);
     return NULL;
 }
 
@@ -642,6 +703,8 @@ BOOL init_hooks(void)
     if (!create_hooks())
     {
         logf("[HOOK] Some hooks failed to create");
+        MH_Uninitialize();
+        reset_server_globals();
         return FALSE;
     }
 
@@ -655,6 +718,9 @@ BOOL init_hooks(void)
     else
     {
         logf("[HOOK] Failed to enable hooks: %d", (int)status);
+        MH_DisableHook(MH_ALL_HOOKS);
+        MH_Uninitialize();
+        reset_server_globals();
         return FALSE;
     }
 

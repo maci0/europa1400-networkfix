@@ -134,13 +134,28 @@ void log_winsock_error(const char *prefix, SOCKET s, int error)
 void log_socket_buffer_info(SOCKET s)
 {
     static SOCKET last_logged_socket = INVALID_SOCKET;
+    BOOL should_log = FALSE;
 
-    if (s == last_logged_socket)
+    if (!g_logctx.critical_section_initialized)
     {
-        return;
+        // Logging not ready — skip dedup, just log directly (logf will no-op)
+        should_log = TRUE;
+    }
+    else
+    {
+        EnterCriticalSection(&g_logctx.critical_section);
+        if (s != last_logged_socket)
+        {
+            last_logged_socket = s;
+            should_log = TRUE;
+        }
+        LeaveCriticalSection(&g_logctx.critical_section);
     }
 
-    // Get socket buffer sizes
+    if (!should_log)
+        return;
+
+    // Get socket buffer sizes (outside lock — slow syscall)
     int recv_buf_size = -1;
     int send_buf_size = -1;
     int opt_len = sizeof(int);
@@ -150,7 +165,6 @@ void log_socket_buffer_info(SOCKET s)
     getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&send_buf_size, &opt_len);
 
     logf("[WS2 HOOK] Socket %u: recv_buf=%d, send_buf=%d", (unsigned)s, recv_buf_size, send_buf_size);
-    last_logged_socket = s;
 }
 
 bool init_logging(HMODULE hModule)
@@ -220,8 +234,18 @@ void logf_rate_limited(const char *key, const char *fmt, ...)
         DWORD last_logged;
     } rate_limit_cache[10] = {0};
 
+    if (!key || !fmt)
+        return;
+
+    // If logging not initialized, bail before touching CS (CS not valid yet)
+    if (!g_logctx.critical_section_initialized)
+        return;
+
     DWORD current_time = GetTickCount();
-    int   cache_slot = -1;
+
+    EnterCriticalSection(&g_logctx.critical_section);
+
+    int cache_slot = -1;
 
     // Find existing entry or empty slot
     for (int i = 0; i < 10; i++)
@@ -255,6 +279,7 @@ void logf_rate_limited(const char *key, const char *fmt, ...)
     // Check if enough time has passed
     if (current_time - rate_limit_cache[cache_slot].last_logged < LOG_RATE_LIMIT_MS)
     {
+        LeaveCriticalSection(&g_logctx.critical_section);
         return; // Skip logging
     }
 
@@ -262,6 +287,8 @@ void logf_rate_limited(const char *key, const char *fmt, ...)
     strncpy(rate_limit_cache[cache_slot].key, key, sizeof(rate_limit_cache[cache_slot].key) - 1);
     rate_limit_cache[cache_slot].key[sizeof(rate_limit_cache[cache_slot].key) - 1] = '\0';
     rate_limit_cache[cache_slot].last_logged = current_time;
+
+    LeaveCriticalSection(&g_logctx.critical_section);
 
     va_list ap;
     va_start(ap, fmt);

@@ -113,23 +113,12 @@ The plugin uses [MinHook](https://github.com/TsudaKageyu/minhook), a minimalisti
 ```c
 BOOL init_hooks(void)
 {
-    // 1. Initialize MinHook
-    if (MH_Initialize() != MH_OK)
-        return FALSE;
-
-    // 2. Create hooks for Winsock functions
-    create_hook("ws2_32.dll", "recv", hook_recv);
-    create_hook("ws2_32.dll", "send", hook_send);
-
-    // 3. Create hooks for timing functions
-    create_hook("kernel32.dll", "GetTickCount", hook_GetTickCount);
-
-    // 4. Detect and hook server.dll function
-    detect_and_hook_server_function();
-
-    // 5. Enable all hooks
-    MH_EnableHook(MH_ALL_HOOKS);
-
+    if (g_HooksInitialized) return TRUE;
+    if (!init_server_module()) return FALSE;            // LoadLibrary + detect via pattern→SHA256
+    if (MH_Initialize() != MH_OK) return FALSE;
+    if (!create_hooks()) return FALSE;                  // MH_CreateHook(server RVA) + MH_CreateHookApi(ws2_32/kernel32)
+    if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK) return FALSE;
+    g_HooksInitialized = true;
     return TRUE;
 }
 ```
@@ -285,8 +274,8 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 ```
 
 **Configuration:**
-- `MAX_SEND_RETRIES` - Maximum retry attempts (default: unlimited)
-- `SEND_RETRY_DELAY_MS` - Delay between retries (default: 1ms)
+- `MAX_SEND_RETRIES` - Maximum retry attempts (default: `5000` ≈5 s, was `INT_MAX`)
+- `SEND_RETRY_DELAY_MS` - Delay between retries (default: 1 ms)
 
 **Impact:** Handles network buffer congestion gracefully with automatic retries.
 
@@ -358,59 +347,37 @@ Different game editions have the packet validation function at different offsets
 
 ### Detection Strategy
 
-[src/hooks.c](../src/hooks.c) - `detect_server_version()`
+[src/hooks.c](../src/hooks.c) - `detect_server_version()` + `src/pattern_matcher.c`
 
-1. **Pattern matching first** - Search for known instruction patterns
-2. **SHA256 fallback** - If pattern fails, compute full module hash
-3. **Default to Steam** - If all detection fails, use Steam offset
+1. **Pattern matching first** - `find_srv_gameStreamReader_by_pattern()` scans for `PUSH ECX … 0F 84/85` with wildcards, validates `PUSH ECX` + bounded `JE`/`JNE` targets
+2. **SHA256 fallback** - `calculate_file_sha256()` (CryptoAPI `PROV_RSA_AES` → `PROV_RSA_FULL`) vs `known_versions[]` in `src/versions.c`
+3. **Fail closed** - returns `0` on miss (no default RVA); `init_server_module()` aborts and logs
 
 **Pattern Search:**
 ```c
-// Search for distinctive instruction sequence
-uint8_t pattern[] = {
-    0x8B, 0x44, 0x24, 0x04,  // mov eax, [esp+4]
-    0x8B, 0x48, 0x38,        // mov ecx, [eax+0x38]
-    // ... more bytes
-};
-
-void *func = find_pattern_in_module(hServer, pattern, sizeof(pattern));
+// rizin-verified: 0x51 PUSH ECX … 0F 84/85 wildcards … 8B 45 38
+// src/pattern_matcher.c:SRV_GAMESTREAMREADER_PATTERN (36 B) + MASK
+long off = find_pattern_in_memory(base, size, PATTERN, MASK, sizeof(PATTERN));
 ```
 
 **SHA256 Verification:**
 ```c
-// Hash entire server.dll
-uint8_t hash[32];
-sha256_compute_module(hServer, hash);
-
-// Compare with known versions
-if (memcmp(hash, STEAM_HASH, 32) == 0)
-    return STEAM_RVA;
+// src/sha256.c: CryptAcquireContext(PROV_RSA_AES||PROV_RSA_FULL) + CryptCreateHash(CALG_SHA_256)
+char hex[65]; calculate_file_sha256(wpath, hex, sizeof(hex));
+for (i in known_versions) if (strcmp(hex, known_versions[i].sha256_hash)==0) return target_rva;
 ```
 
 ### Caller Detection
 
-Hooks only apply to calls from server.dll, not other game code or system components.
+Hooks only apply to calls from `server.dll` (cached range, not `GetModuleHandleEx` per call).
 
-[src/hooks.c](../src/hooks.c) - `is_caller_from_server()`
+[src/hooks.c](../src/hooks.c) - `is_caller_from_server()` + `init_server_module()`
 
 ```c
-BOOL is_caller_from_server(uintptr_t caller_addr)
-{
-    // Get server.dll address range
-    static uintptr_t server_start = 0;
-    static uintptr_t server_end = 0;
-
-    if (!server_start)
-    {
-        HMODULE hServer = GetModuleHandle("server.dll");
-        MODULEINFO mi;
-        GetModuleInformation(GetCurrentProcess(), hServer, &mi, sizeof(mi));
-        server_start = (uintptr_t)mi.lpBaseOfDll;
-        server_end = server_start + mi.SizeOfImage;
-    }
-
-    // Check if caller address is within server.dll range
-    return (caller_addr >= server_start && caller_addr < server_end);
+// cached at init_server_module(): g_server_base/size from GetModuleInformation(g_hServerDll)
+BOOL is_caller_from_server(uintptr_t a){
+    if (g_server_base==0 || g_server_size==0) return FALSE;
+    return a >= g_server_base && a < g_server_base + g_server_size;
 }
 ```
 
