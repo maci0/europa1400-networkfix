@@ -14,7 +14,7 @@ MINHOOK_SRCS := $(MINHOOK_DIR)/src/buffer.c \
 $(MINHOOK_DIR)/src/hde/hde32.c \
 $(MINHOOK_DIR)/src/hook.c \
 $(MINHOOK_DIR)/src/trampoline.c
-HDRS := $(wildcard src/*.h) $(wildcard src/*.c) Makefile .clang-format
+HDRS := $(wildcard src/*.h) Makefile .clang-format
 SRCS := src/main.c src/hooks.c src/logging.c src/sha256.c src/pattern_matcher.c src/versions.c $(MINHOOK_SRCS)
 TEST_SRCS := test/test_hooks.c src/hooks.c src/logging.c src/sha256.c src/pattern_matcher.c src/versions.c $(MINHOOK_SRCS)
 CFLAGS := -I$(MINHOOK_DIR)/include -Isrc
