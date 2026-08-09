@@ -58,7 +58,8 @@ jobs:
       - name: Build ASI (release)
         run: |
           make clean
-          make
+          make all
+          ls -lh bin/ 2>&1 | head -n 20
 
       - name: Verify ASI
         run: |
