@@ -32,7 +32,7 @@ for _ in $(seq 1 5); do
   fi
 done
 read -r WX WY WW WH < <(xdotool getwindowgeometry --shell "$WID" 2>/dev/null | awk -F= '/X=/{x=$2} /Y=/{y=$2} /WIDTH/{w=$2} /HEIGHT/{h=$2} END{print x, y, w, h}')
-WW="${WW:-1280}"; WH="${WH:-1024}"
+WW="${WW:-1024}"; WH="${WH:-768}"
 echo "[driver:client] geom $WX $WY ${WW}x${WH} HOST_IP=$HOST_IP" | tee -a "$LOG"
 # Give host time to start lobby
 sleep 8

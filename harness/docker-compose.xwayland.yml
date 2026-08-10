@@ -1,8 +1,8 @@
-# Dedicated Xwayland overlay: gives containers their own Xwayland :92 (own root 1280x1024)
+# Dedicated Xwayland overlay: gives containers their own Xwayland :92 (own root 1024x768)
 # with host GPU (radeonsi) — avoids Xvfb llvmpipe black-screen while not touching :1.
 # Usage: docker compose -f docker-compose.yml -f docker-compose.xwayland.yml up
 # Requires host Xwayland :92 running (created by entrypoint if USE_XWAYLAND=1 inside container,
-# or pre-started on host via: WAYLAND_DISPLAY=wayland-0 Xwayland :92 -geometry 1280x1024 &)
+# or pre-started on host via: WAYLAND_DISPLAY=wayland-0 Xwayland :92 -geometry 1024x768 &)
 # This overlay just configures DISPLAY=:92; the Xwayland process itself must be started
 # separately (see harness/scripts/start-xwayland.sh).
 services:
