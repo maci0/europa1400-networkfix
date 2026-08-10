@@ -907,6 +907,17 @@ git push origin v1.2.0
 - [Ghidra Decompiler](https://ghidra-sre.org/)
 - [x86 Disassembly](https://en.wikibooks.org/wiki/X86_Disassembly)
 
+## Harness Prefix: Win32 not WoW64
+
+Europa1400Gold_TL.exe is PE32 — the game runs under **WINEARCH=win32** (not `wow64` experimental). The host stale prefix `GILDE/guild-network-test/wpf1` was built under `win64 wow64` and is stale for this host. `harness/Dockerfile` now `ENV WINEARCH=win32` + `xvfb-run wine wineboot --init` + `wine /tmp/setup.exe /VERYSILENT /DIR=C:\Guild` + `cp /tmp/setup.exe /harness/` to refresh it, and `harness/docker-compose.yml` carries `WINEARCH=win32`. To rebuild a fresh prefix:
+
+```bash
+docker compose -f harness/docker-compose.yml build   # 42s winecfg + setup, 6.62 GB image #arch=win32
+# verify: docker run --rm gilde-harness:latest bash -c 'grep -m1 "#arch" /home/gilde/pfx/system.reg'  # #arch=win32
+```
+
+The entrypoint `harness/entrypoint.sh` still supports `CLEAN_PREFIX=0/1` to optionally `rm -rf WINEPREFIX && wineboot --init && setup...` per container at `up` time (see `Troubleshooting` for stale `wpf1` symptoms).
+
 ## Getting Help
 
 - **Issues:** [GitHub Issues](https://github.com/maci0/europa1400-networkfix/issues)
