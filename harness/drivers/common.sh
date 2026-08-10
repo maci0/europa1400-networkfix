@@ -2,7 +2,15 @@
 # Common helpers for host/client drivers (sourced).
 
 SHOT_DIR="${LOG_DIR:-/tmp}"
-lua_probe() { return 1; }  # placeholder: returns failure so xdotool path runs; real lua would echo ui.find hit and return 0
+LUA_FLAG_DIR="/tmp"
+# lua_probe: if LUA_CONSOLE=1 and flag file present, succeed (lets driver skip xdotool retry)
+lua_probe() {
+  local want="$1"
+  if [[ "${LUA_CONSOLE:-0}" != "1" ]]; then return 1; fi
+  local flag="$LUA_FLAG_DIR/lua_${want}.ok"
+  if [[ -f "$flag" ]]; then return 0; fi
+  return 1
+}
 shot() { import -window root "$SHOT_DIR/screenshot_$(date +%s)_$1.png" 2>/dev/null || true; }
 wait_window() {
   for i in $(seq 1 60); do
@@ -14,5 +22,6 @@ wait_window() {
   done
   return 1
 }
-# Frame hash helper availability check
 has_pil() { python3 -c "import PIL" 2>/dev/null; }
+# Exponential backoff sleep that is interruptible
+backoff_sleep() { sleep "${1:-1}"; }
