@@ -1,6 +1,8 @@
 #!/bin/bash
 # Client driver: waits for window, joins lobby at host IP.
 set -euo pipefail
+# Optional common helpers (lua probe + screenshot hashing)
+if [ -f "$(dirname "$0")/common.sh" ]; then . "$(dirname "$0")/common.sh"; fi
 LOG="${LOG_DIR:-/tmp}/driver.log"
 DISPLAY="${DISPLAY:-:99}"
 export DISPLAY
