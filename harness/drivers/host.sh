@@ -53,17 +53,46 @@ sleep 8
 echo "[driver:host] warm-up done, proceeding to Network" | tee -a "$LOG"
 
 # Navigate to Network via keyboard (main menu: 0 New Game, 1 Load, 2 Tutorial, 3 Network)
-echo "[driver:host] navigating to Network via keyboard" | tee -a "$LOG"
-xdotool windowactivate --sync "$WID" 2>/dev/null || true; sleep 0.5
-# Ensure we're at top of menu: Escape back to main, then send Down 3 to reach Network
-xdotool key --clearmodifiers --window "$WID" Escape 2>/dev/null || true; sleep 1
-xdotool key --clearmodifiers --window "$WID" Escape 2>/dev/null || true; sleep 1
-for _ in 1 2 3; do xdotool key --clearmodifiers --window "$WID" Down 2>/dev/null || true; sleep 0.8; done
-sleep 0.5
-xdotool key --clearmodifiers --window "$WID" Return 2>/dev/null || true; sleep 4
-import -window root "${LOG_DIR:-/tmp}/screenshot_network.png" 2>/dev/null || true
+if lua_probe "Network"; then echo "[driver:host] lua Network flag present, skipping xdotool" | tee -a "$LOG"; else
+  echo "[driver:host] navigating to Network via keyboard" | tee -a "$LOG"
+  xdotool windowactivate --sync "$WID" 2>/dev/null || true; sleep 0.5
+  xdotool key --clearmodifiers --window "$WID" Escape 2>/dev/null || true; sleep 1
+  xdotool key --clearmodifiers --window "$WID" Escape 2>/dev/null || true; sleep 1
+  for _ in 1 2 3; do xdotool key --clearmodifiers --window "$WID" Down 2>/dev/null || true; sleep 0.8; done
+  sleep 0.5
+  xdotool key --clearmodifiers --window "$WID" Return 2>/dev/null || true; sleep 4
+  import -window root "${LOG_DIR:-/tmp}/screenshot_network.png" 2>/dev/null || true
+  if [ "$(stat -c%s "$LOG_DIR/screenshot_network.png" 2>/dev/null || echo 0)" -le 5000 ]; then
+    echo "[driver:host] screenshot blank, retrying Down->Return once" | tee -a "$LOG"
+    sleep 2
+    for _ in 1 2 3; do xdotool key --clearmodifiers --window "$WID" Down 2>/dev/null || true; sleep 0.7; done
+    xdotool key --clearmodifiers --window "$WID" Return 2>/dev/null || true; sleep 3
+    import -window root "${LOG_DIR:-/tmp}/screenshot_network.png" 2>/dev/null || true
+  fi
+fi
 echo "[driver:host] on Network screen; holding for recording." | tee -a "$LOG"
-sleep 10
+sleep 5
 import -window root "${LOG_DIR:-/tmp}/screenshot_network_stay.png" 2>/dev/null || true
-echo "[driver:host] Driver done (stayed on Network). Leave game running." | tee -a "$LOG"
-while kill -0 "${GAME_PID:-1}" 2>/dev/null; do sleep 5; done
+# --- try to actually HOST a game (if UI present) ---
+for step in 1 2 3; do
+  # Prefer lua in-process if available: look for "Create" button state
+  if lua_probe "HostCreated"; then echo "[driver:host] lua HostCreated flag — skipping click" | tee -a "$LOG"; break; fi
+  # Fallback xdotool: Network menu usually shows "Create Game"/"Join Game" buttons centered
+  # Use relative coords at 1024x768: lobby Create is around 512,340
+  xdotool mousemove --window "$WID" 512 340 2>/dev/null || true; sleep 0.3
+  xdotool click --window "$WID" 1 2>/dev/null || true; sleep 4
+  # Try Escape-progression to get past city select if appeared
+  xdotool key --window "$WID" Tab 2>/dev/null || true; sleep 0.5
+  xdotool key --window "$WID" Return 2>/dev/null || true; sleep 3
+  # Check if we left Network (game window grew or changed) — peek log
+  import -window root "${LOG_DIR:-/tmp}/screenshot_host_step${step}.png" 2>/dev/null || true
+  echo "[driver:host] host step $step done" | tee -a "$LOG"
+  sleep 2
+done
+echo "[driver:host] Driver done (Network + Host attempts). Leave game running." | tee -a "$LOG"
+shot host_lobby
+# Keep alive while game runs; also emit periodic heartbeat for harness logs
+while kill -0 "${GAME_PID:-1}" 2>/dev/null; do
+  echo "[driver:host] heartbeat WID=$WID $(date -Iseconds)" >>"$LOG" 2>/dev/null || true
+  sleep 15
+done
