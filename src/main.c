@@ -11,7 +11,7 @@
 #include <windows.h>
 
 // Global module handle for configuration access
-HMODULE g_hModule = NULL;
+HMODULE       g_hModule = NULL;
 static HANDLE g_hInitThread = NULL;
 
 /**

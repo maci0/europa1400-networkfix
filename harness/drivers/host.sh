@@ -2,7 +2,8 @@
 # Host driver: waits for window, creates lobby, waits for client, starts mission.
 # Coordinates are 1280x1024 reference; uses xdotool with --sync and window activation.
 set -euo pipefail
-LOG="${LOG_DIR:-/tmp}/driver.log"
+LOG_DIR="${LOG_DIR:-/tmp}"
+LOG="${LOG_DIR}/driver.log"
 DISPLAY="${DISPLAY:-:99}"
 export DISPLAY
 echo "[driver:host] DISPLAY=$DISPLAY waiting for Europa window..." | tee -a "$LOG"
@@ -24,29 +25,41 @@ if [[ -z "$WID" ]]; then
 fi
 xdotool windowactivate --sync "$WID" 2>/dev/null || true
 sleep 1
-# Take reference screenshot if needed
-# import -window "$WID" /tmp/host_before.png 2>/dev/null || true
-
-# Heuristic clicks: reference harness historically clicks through intro → Multiplayer → Host.
-# These are best-effort; harness is meant to be calibrated via screenshots.
-# Example sequence (adjust via screenshots):
-# - ESC to skip intro, then click "Mehrspieler"/"Multiplayer"
-# - Host → map select → Start
+# If winedbg crash dialog appears, dismiss it
+for _ in $(seq 1 5); do
+  DBG=$(xdotool search --name "Program Error|Wine Debugger" 2>/dev/null | head -n1 || true)
+  if [[ -n "$DBG" ]]; then
+    echo "[driver:host] Dismissing crash dialog $DBG" | tee -a "$LOG"
+    xdotool windowactivate --sync "$DBG" 2>/dev/null || true; sleep 0.5
+    xdotool key --window "$DBG" Escape 2>/dev/null || true; sleep 0.5
+    xdotool key --window "$DBG" Tab Tab Tab 2>/dev/null || true; sleep 0.2; xdotool key --window "$DBG" Return 2>/dev/null || true; sleep 0.5
+  fi
+done
 
 # Skip intro
 xdotool key --window "$WID" Escape 2>/dev/null || true; sleep 1
 xdotool key --window "$WID" Escape 2>/dev/null || true; sleep 1
 
-# Try to click center-ish "Multiplayer" (calibrate: screenshot first run)
 # Window geometry
 read -r WX WY WW WH < <(xdotool getwindowgeometry --shell "$WID" 2>/dev/null | awk -F= '/X=/{x=$2} /Y=/{y=$2} /WIDTH/{w=$2} /HEIGHT/{h=$2} END{print x, y, w, h}')
 WW="${WW:-1280}"; WH="${WH:-1024}"
 echo "[driver:host] geom $WX $WY ${WW}x${WH}" | tee -a "$LOG"
+# Longer warm-up: container wine initializes evt tables slower (poll loop at 0x42980D needs 0x6b7e94 allocated)
+sleep 8
+echo "[driver:host] warm-up done, proceeding to Network" | tee -a "$LOG"
 
-# Click approximate positions (to be refined with real run screenshots)
-# Multiplayer button roughly center
-xdotool mousemove --window "$WID" $((WW/2)) $((WH/2)) 2>/dev/null || true; sleep 0.3; xdotool click --window "$WID" 1 2>/dev/null || true; sleep 2
-
-echo "[driver:host] Driver done (best-effort clicks). Leave game running for harness to capture hook_log." | tee -a "$LOG"
-# Keep alive while game runs
+# Navigate to Network via keyboard (main menu: 0 New Game, 1 Load, 2 Tutorial, 3 Network)
+echo "[driver:host] navigating to Network via keyboard" | tee -a "$LOG"
+xdotool windowactivate --sync "$WID" 2>/dev/null || true; sleep 0.5
+# Ensure we're at top of menu: Escape back to main, then send Down 3 to reach Network
+xdotool key --clearmodifiers --window "$WID" Escape 2>/dev/null || true; sleep 1
+xdotool key --clearmodifiers --window "$WID" Escape 2>/dev/null || true; sleep 1
+for _ in 1 2 3; do xdotool key --clearmodifiers --window "$WID" Down 2>/dev/null || true; sleep 0.8; done
+sleep 0.5
+xdotool key --clearmodifiers --window "$WID" Return 2>/dev/null || true; sleep 4
+import -window root "${LOG_DIR:-/tmp}/screenshot_network.png" 2>/dev/null || true
+echo "[driver:host] on Network screen; holding for recording." | tee -a "$LOG"
+sleep 10
+import -window root "${LOG_DIR:-/tmp}/screenshot_network_stay.png" 2>/dev/null || true
+echo "[driver:host] Driver done (stayed on Network). Leave game running." | tee -a "$LOG"
 while kill -0 "${GAME_PID:-1}" 2>/dev/null; do sleep 5; done

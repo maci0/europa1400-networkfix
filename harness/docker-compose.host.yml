@@ -1,0 +1,22 @@
+# Host-passthrough overlay for gameplay capture: keeps isolated gilde-net,
+# but gives the host container access to the host's Xwayland :1 + DRI for real rendering.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.host.yml up --abort-on-container-exit
+# Entrypoint will detect DISPLAY=:1 + XAUTHORITY=/tmp/xauth and skip Xvfb, using host X directly
+# (still in same pidns as Wine — just not isolated X, needed to avoid 0x42980D llvmpipe fault).
+
+services:
+  gilde-host:
+    environment:
+      - DISPLAY=:1
+      - XAUTHORITY=/tmp/xauth
+      - USE_HOST_X=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ${XAUTHORITY}:/tmp/xauth:ro
+      - ./logs/host:/home/gilde/logs
+      - ../bin/networkfix.asi:/harness/networkfix.asi:ro
+    devices:
+      - /dev/dri:/dev/dri
+    # keep gilde-net membership from base file — compose merges networks + devices correctly
+
+  # client stays fully isolated on Xvfb :99 (no host X) — proves driver isolation still works

@@ -56,16 +56,17 @@ $(TEST_SRCS)
 
 # Reproducible verify: build twice with fixed SOURCE_DATE_EPOCH
 verify: check-zig
-	rm -rf bin/verify1 bin/verify2 && mkdir -p bin/verify1 bin/verify2
+	rm -rf bin/verify1 bin/verify2; mkdir -p bin/verify1 bin/verify2
 	SOURCE_DATE_EPOCH=0 $(MAKE) $(TARGET)
 	cp $(TARGET) bin/verify1/networkfix.asi
-	SOURCE_DATE_EPOCH=0 $(MAKE) clean && SOURCE_DATE_EPOCH=0 $(MAKE) $(TARGET)
+	mkdir -p bin/verify2
+	SOURCE_DATE_EPOCH=0 $(MAKE) $(TARGET)
 	cp $(TARGET) bin/verify2/networkfix.asi
 	sha256sum bin/verify1/networkfix.asi bin/verify2/networkfix.asi
 	cmp bin/verify1/networkfix.asi bin/verify2/networkfix.asi && echo "reproducible: OK"
 
 clean:
-	rm -rf bin/*
+	rm -f bin/*.asi bin/*.exe bin/*.pdb bin/*.lib 2>/dev/null; rm -f bin/verify*/*.asi 2>/dev/null || true
 
 format:
 	clang-format -i src/*.c src/*.h

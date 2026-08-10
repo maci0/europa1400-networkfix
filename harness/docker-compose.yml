@@ -9,10 +9,20 @@ services:
     environment:
       - ROLE=host
       - DISPLAY=:99
+      - WINEARCH=win32
       - WINEPREFIX=/home/gilde/pfx
+      # ideal: CLEAN_PREFIX=1 for fully clean prefix (winecfg+setup 300s)
+      - CLEAN_PREFIX=0
+      - GC_LOSS=${GC_LOSS:-}
+      - GC_DELAY=${GC_DELAY:-}
+      - GC_REORDER=${GC_REORDER:-}
+      - GC_CORRUPT=${GC_CORRUPT:-}
+      - GC_RATE=${GC_RATE:-}
       - DRIVER=auto
     cap_add:
       - NET_ADMIN
+    devices:
+      - /dev/dri:/dev/dri
     volumes:
       - ./logs/host:/home/gilde/logs
       - ../bin/networkfix.asi:/harness/networkfix.asi:ro
@@ -37,11 +47,18 @@ services:
     environment:
       - ROLE=client
       - HOST_IP=gilde-host
+      - GC_LOSS=${GC_LOSS:-}
+      - GC_DELAY=${GC_DELAY:-}
       - DISPLAY=:99
+      - WINEARCH=win32
       - WINEPREFIX=/home/gilde/pfx
+      # ideal: CLEAN_PREFIX=1 for fully clean prefix (winecfg+setup 300s)
+      - CLEAN_PREFIX=0
       - DRIVER=auto
     cap_add:
       - NET_ADMIN
+    devices:
+      - /dev/dri:/dev/dri
     volumes:
       - ./logs/client:/home/gilde/logs
       - ../bin/networkfix.asi:/harness/networkfix.asi:ro
