@@ -41,25 +41,27 @@ echo "[driver:client] geom $WX $WY ${WW}x${WH} HOST_IP=$HOST_IP" | tee -a "$LOG"
 sleep 8
 xdotool key --window "$WID" Escape 2>/dev/null || true; sleep 1
 xdotool key --window "$WID" Escape 2>/dev/null || true; sleep 1
-# Try lua flag first (host writes lobby IP or marker), else coordinate click
+# Join: prefer lua, else deterministic xdotool — Network→Join (Down×(WW/2 offset) + click) then HOST_IP
 if lua_probe "Joined"; then echo "[driver:client] lua Joined flag — skipping click" | tee -a "$LOG"
 else
   for attempt in 1 2 3; do
     echo "[driver:client] join attempt $attempt: Network→Join at $WW,$WH HOST_IP=$HOST_IP" | tee -a "$LOG"
-    # Center-ish click (lobby list) + keyboard fallback (Down×2 → Return for Join)
     xdotool mousemove --window "$WID" $((WW/2)) $((WH/2 + 40)) 2>/dev/null || true; sleep 0.3
-    xdotool click --window "$WID" 1 2>/dev/null || true; sleep 3
-    for _ in 1 2; do xdotool key --clearmodifiers --window "$WID" Down 2>/dev/null || true; sleep 0.6; done
+    xdotool click --window "$WID" 1 2>/dev/null || true; sleep 1
+    xdotool key --clearmodifiers --window "$WID" Down 2>/dev/null || true; sleep 0.6
+    xdotool key --clearmodifiers --window "$WID" Down 2>/dev/null || true; sleep 0.6
     xdotool key --clearmodifiers --window "$WID" Return 2>/dev/null || true; sleep 4
-    # If host IP field needs typing, try it
+    # IP/hostname entry if not default bridged DNS
     if [ -n "${HOST_IP:-}" ] && [ "$HOST_IP" != "gilde-host" ]; then
       xdotool key --window "$WID" Tab 2>/dev/null || true; sleep 0.3
       xdotool type --window "$WID" "$HOST_IP" 2>/dev/null || true; sleep 0.3
       xdotool key --window "$WID" Return 2>/dev/null || true; sleep 2
     fi
+    # Confirm/OK
+    xdotool key --window "$WID" Return 2>/dev/null || true; sleep 2
     import -window root "${LOG_DIR:-/tmp}/screenshot_client_join${attempt}.png" 2>/dev/null || true
-    sleep 2
-    break
+    if [ "$(stat -c%s "${LOG_DIR:-/tmp}/screenshot_client_join${attempt}.png" 2>/dev/null || echo 0)" -gt 8000 ]; then break; fi
+    echo "[driver:client] screenshot blank, retrying" | tee -a "$LOG"; sleep 2
   done
   shot client_joined
 fi

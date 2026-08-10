@@ -73,23 +73,28 @@ fi
 echo "[driver:host] on Network screen; holding for recording." | tee -a "$LOG"
 sleep 5
 import -window root "${LOG_DIR:-/tmp}/screenshot_network_stay.png" 2>/dev/null || true
-# --- try to actually HOST a game (if UI present) ---
+# --- try to actually HOST a game (if UI present) — Create → City → Start ---
 for step in 1 2 3; do
-  # Prefer lua in-process if available: look for "Create" button state
   if lua_probe "HostCreated"; then echo "[driver:host] lua HostCreated flag — skipping click" | tee -a "$LOG"; break; fi
-  # Fallback xdotool: Network menu usually shows "Create Game"/"Join Game" buttons centered
-  # Use relative coords at 1024x768: lobby Create is around 512,340
+  # Network screen: "Create Game" is top of Host/Join list; also try keyboard path Down(0)→Return as fallback
   xdotool mousemove --window "$WID" 512 340 2>/dev/null || true; sleep 0.3
-  xdotool click --window "$WID" 1 2>/dev/null || true; sleep 4
-  # Try Escape-progression to get past city select if appeared
-  xdotool key --window "$WID" Tab 2>/dev/null || true; sleep 0.5
+  xdotool click --window "$WID" 1 2>/dev/null || true; sleep 1
+  xdotool key --clearmodifiers --window "$WID" Return 2>/dev/null || true; sleep 4
+  # City select: pick first city (London/default) → Return
+  xdotool key --clearmodifiers --window "$WID" Down 2>/dev/null || true; sleep 0.5
+  xdotool key --clearmodifiers --window "$WID" Return 2>/dev/null || true; sleep 3
+  # Difficulty/Map defaults: just confirm with Return / Tab+Return
+  xdotool key --window "$WID" Tab 2>/dev/null || true; sleep 0.4
   xdotool key --window "$WID" Return 2>/dev/null || true; sleep 3
-  # Check if we left Network (game window grew or changed) — peek log
   import -window root "${LOG_DIR:-/tmp}/screenshot_host_step${step}.png" 2>/dev/null || true
+  # If screenshot non-blank we likely left Network
+  if [ "$(stat -c%s "${LOG_DIR:-/tmp}/screenshot_host_step${step}.png" 2>/dev/null || echo 0)" -gt 8000 ]; then
+    echo "[driver:host] host step $step screenshot looks valid, continuing" | tee -a "$LOG"
+  fi
   echo "[driver:host] host step $step done" | tee -a "$LOG"
   sleep 2
 done
-echo "[driver:host] Driver done (Network + Host attempts). Leave game running." | tee -a "$LOG"
+echo "[driver:host] Driver done (Network + Host/Create attempts). Leave game running." | tee -a "$LOG"
 shot host_lobby
 # Keep alive while game runs; also emit periodic heartbeat for harness logs
 while kill -0 "${GAME_PID:-1}" 2>/dev/null; do

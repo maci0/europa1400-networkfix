@@ -2,7 +2,7 @@
 # Common helpers for host/client drivers (sourced).
 
 SHOT_DIR="${LOG_DIR:-/tmp}"
-LUA_FLAG_DIR="/tmp"
+LUA_FLAG_DIR="${LUA_FLAG_DIR:-/tmp}"
 # lua_probe: if LUA_CONSOLE=1 and flag file present, succeed (lets driver skip xdotool retry)
 lua_probe() {
   local want="$1"
