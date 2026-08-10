@@ -8,6 +8,16 @@ try:
 except ImportError:
     HAS_PIL=False
 
+def blank_or_black(p):
+    try:
+        from PIL import Image
+        im=Image.open(p).convert('L')
+        hist=im.histogram()
+        # blank if >95% pixels are same dark value
+        return max(hist)/sum(hist) > 0.95
+    except Exception:
+        return False
+
 def file_hash(p):
     h=hashlib.sha256()
     h.update(Path(p).read_bytes())
@@ -19,7 +29,9 @@ if __name__ == "__main__":
         sys.exit(2)
     p=sys.argv[1]
     h=file_hash(p)
-    print(f"{p}: sha={h}")
+    blk=blank_or_black(p)
+    print(f"{p}: sha={h} blank={blk}")
+    if blk: print(f"{p}: blank frame", file=sys.stderr)
     if len(sys.argv)>=3 and h!=sys.argv[2]:
         print(f"mismatch expected {sys.argv[2]}", file=sys.stderr)
         sys.exit(1)
