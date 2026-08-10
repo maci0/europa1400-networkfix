@@ -22,6 +22,7 @@ if [[ -z "$WID" ]]; then
   exit 0
 fi
 xdotool windowactivate --sync "$WID" 2>/dev/null || true; sleep 1
+xdotool windowmove "$WID" 0 0 2>/dev/null || true; sleep 0.5
 for _ in $(seq 1 5); do
   DBG=$(xdotool search --name "Program Error|Wine Debugger" 2>/dev/null | head -n1 || true)
   if [[ -n "$DBG" ]]; then
