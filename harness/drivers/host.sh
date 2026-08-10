@@ -2,6 +2,8 @@
 # Host driver: waits for window, creates lobby, waits for client, starts mission.
 # Coordinates are 1024x768 reference; uses xdotool with --sync and window activation.
 set -euo pipefail
+# Optional common helpers (lua probe + screenshot hashing)
+if [ -f "$(dirname "$0")/common.sh" ]; then . "$(dirname "$0")/common.sh"; fi
 LOG_DIR="${LOG_DIR:-/tmp}"
 LOG="${LOG_DIR}/driver.log"
 DISPLAY="${DISPLAY:-:99}"
