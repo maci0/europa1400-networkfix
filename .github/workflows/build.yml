@@ -70,6 +70,11 @@ jobs:
           sha256sum bin/networkfix.asi
           file bin/networkfix.asi
 
+      - name: Build harness image (smoke)
+        run: |
+          docker build -t gilde-harness:ci harness/ 2>&1 | tail -n 40
+          docker run --rm gilde-harness:ci bash -c 'ls -lh /home/gilde/pfx/drive_c/Guild/Europa1400Gold_TL.exe; cat /harness/dxwrapper.ini 2>&1 | head' 2>&1 | head -n 20
+
       - name: Install Wine
         run: |
           sudo dpkg --add-architecture i386

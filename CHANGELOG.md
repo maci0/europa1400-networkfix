@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-10
+
+### Fixed
+
+- `harness/entrypoint.sh`: add Xwayland `:92` accelerated path (`USE_XWAYLAND=1`, host socket `/tmp/.X11-unix/X92`, `radeonsi`), fix trap cleanup for host-X passthrough, keep `gilde-net` isolated; verified via `Xwayland :92 -geometry 1280x1024` (host `wayland-0`) vs `Xvfb` `llvmpipe` — `0x42980D` (`fcn.00429800` poll on `6b7e94` evt table) crashes ~10 s on plain Xvfb headless but survives 30 s on accelerated Xwayland (see `harness/README.md`, `harness/artifacts/VIDEO_INDEX.md`).
+- `harness/drivers/host.sh`: restore `Network` keyboard navigation (`Down×3→Return` from main menu) with `LOG_DIR` fix (`${LOG_DIR:-/tmp}`), 8 s warm-up for evt table, stay-on-Network (no `Escape` back to avoid `evt:console` teardown fault); `client.sh` split to `Xvfb :99` to avoid X contention.
+
+### Added
+
+- `harness/docker-compose.xwayland.yml`: overlay for dedicated `Xwayland :92` (host GPU) with `privileged: true` + `/dev/dri` for container `radeonsi` (was `llvmpipe` `amdgpu_get_auth` fail).
+- `harness/scripts/start-xwayland.sh`: helper to start `Xwayland :92` (own root, `host GPU`).
+- `harness/artifacts/`: `proof_xwayland_*.mp4`, `proof_host_xwayland_final.mp4`, screenshots, `VIDEO_INDEX.md`.
+
+### Changed
+
+- `harness/README.md`: document Xvfb vs Xwayland `:92` paths and `0x42980D` headless note.
+- `.github/workflows/build.yml`: add harness image smoke build (`docker build -t gilde-harness:ci harness/`).
+- `Makefile`: `clean` no longer deletes `bin/verify*/`, `verify` recreates dirs after clean (fix `bin/verify2` missing), reproducible `OK` (`43418974`).
+
+### Verification
+
+- `rizin` validates `0x42980D` is `fcn.00429800` (`6b7e94` evt table, `00429920` allocator), `server.dll` `GOG 0x3960` / `Steam 0x3720`, `make test` all passed, `make verify` reproducible.
+
+
+
 ## [0.2.0] - 2026-08-09
 
 ### Fixed
@@ -51,6 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial ASI plugin with MinHook hooks for `recv`/`send`/`GetTickCount`/`srv_gameStreamReader`, pattern matcher,
   SHA256 version detection, and Wine integration tests (`make test`).
 
-[Unreleased]: https://github.com/maci0/europa1400-networkfix/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/maci0/europa1400-networkfix/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/maci0/europa1400-networkfix/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/maci0/europa1400-networkfix/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/maci0/europa1400-networkfix/releases/tag/v0.1.0

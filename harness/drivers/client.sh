@@ -22,6 +22,15 @@ if [[ -z "$WID" ]]; then
   exit 0
 fi
 xdotool windowactivate --sync "$WID" 2>/dev/null || true; sleep 1
+for _ in $(seq 1 5); do
+  DBG=$(xdotool search --name "Program Error|Wine Debugger" 2>/dev/null | head -n1 || true)
+  if [[ -n "$DBG" ]]; then
+    echo "[driver:client] Dismissing crash dialog $DBG" | tee -a "$LOG"
+    xdotool windowactivate --sync "$DBG" 2>/dev/null || true; sleep 0.5
+    xdotool key --window "$DBG" Escape 2>/dev/null || true; sleep 0.5
+    xdotool key --window "$DBG" Tab Tab Tab 2>/dev/null || true; sleep 0.2; xdotool key --window "$DBG" Return 2>/dev/null || true; sleep 0.5
+  fi
+done
 read -r WX WY WW WH < <(xdotool getwindowgeometry --shell "$WID" 2>/dev/null | awk -F= '/X=/{x=$2} /Y=/{y=$2} /WIDTH/{w=$2} /HEIGHT/{h=$2} END{print x, y, w, h}')
 WW="${WW:-1280}"; WH="${WH:-1024}"
 echo "[driver:client] geom $WX $WY ${WW}x${WH} HOST_IP=$HOST_IP" | tee -a "$LOG"

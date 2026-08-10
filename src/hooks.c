@@ -165,14 +165,18 @@ static int get_available_bytes(SOCKET s)
  */
 static BOOL is_safe_server_path(const char *path)
 {
-    if (!path || !path[0]) return FALSE;
+    if (!path || !path[0])
+        return FALSE;
     // Reject absolute paths (drive letter, UNC, leading slash)
-    if (path[1] == ':' || path[0] == '\\' || path[0] == '/') return FALSE;
+    if (path[1] == ':' || path[0] == '\\' || path[0] == '/')
+        return FALSE;
     // Reject traversal
-    if (strstr(path, "..")) return FALSE;
+    if (strstr(path, ".."))
+        return FALSE;
     // Restrict to .dll files
     size_t len = strlen(path);
-    if (len < 4 || _stricmp(path + len - 4, ".dll") != 0) return FALSE;
+    if (len < 4 || _stricmp(path + len - 4, ".dll") != 0)
+        return FALSE;
     return TRUE;
 }
 
@@ -190,8 +194,7 @@ static BOOL load_server_dll(const char *serverPath)
     {
         PathRemoveFileSpecA(moduleDir);
         char combined[MAX_PATH] = {0}, full[MAX_PATH] = {0}, canonical[MAX_PATH] = {0};
-        if (PathCombineA(combined, moduleDir, serverPath) &&
-            GetFullPathNameA(combined, sizeof(full), full, NULL) &&
+        if (PathCombineA(combined, moduleDir, serverPath) && GetFullPathNameA(combined, sizeof(full), full, NULL) &&
             GetFullPathNameA(full, sizeof(canonical), canonical, NULL))
         {
             // Must be under game dir
@@ -257,8 +260,8 @@ static BOOL init_server_module(void)
         // Build absolute file path for pre-hash (best-effort)
         char moduleDir[MAX_PATH] = {0};
         char filePath[MAX_PATH] = {0};
-        if (GetModuleFileNameA(g_hModule, moduleDir, sizeof(moduleDir)) != 0 &&
-            PathRemoveFileSpecA(moduleDir) && PathCombineA(filePath, moduleDir, serverPath))
+        if (GetModuleFileNameA(g_hModule, moduleDir, sizeof(moduleDir)) != 0 && PathRemoveFileSpecA(moduleDir) &&
+            PathCombineA(filePath, moduleDir, serverPath))
         {
             wchar_t wpath[MAX_PATH];
             if (MultiByteToWideChar(CP_ACP, 0, filePath, -1, wpath, MAX_PATH) != 0)
@@ -292,7 +295,8 @@ static BOOL init_server_module(void)
             {
                 if (strcmp(preHash, postHash) != 0)
                 {
-                    logf("[HOOK] Hash mismatch pre/post load: %s != %s — possible replacement, aborting", preHash, postHash);
+                    logf("[HOOK] Hash mismatch pre/post load: %s != %s — possible replacement, aborting", preHash,
+                         postHash);
                     reset_server_globals();
                     return FALSE;
                 }

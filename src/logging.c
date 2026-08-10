@@ -134,7 +134,7 @@ void log_winsock_error(const char *prefix, SOCKET s, int error)
 void log_socket_buffer_info(SOCKET s)
 {
     static SOCKET last_logged_socket = INVALID_SOCKET;
-    BOOL should_log = FALSE;
+    BOOL          should_log = FALSE;
 
     if (!g_logctx.critical_section_initialized)
     {

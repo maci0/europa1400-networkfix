@@ -1,0 +1,24 @@
+# Dedicated Xwayland overlay: gives containers their own Xwayland :92 (own root 1280x1024)
+# with host GPU (radeonsi) — avoids Xvfb llvmpipe black-screen while not touching :1.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.xwayland.yml up
+# Requires host Xwayland :92 running (created by entrypoint if USE_XWAYLAND=1 inside container,
+# or pre-started on host via: WAYLAND_DISPLAY=wayland-0 Xwayland :92 -geometry 1280x1024 &)
+# This overlay just configures DISPLAY=:92; the Xwayland process itself must be started
+# separately (see harness/scripts/start-xwayland.sh).
+services:
+  gilde-host:
+    privileged: true
+    environment:
+      - DISPLAY=:92
+      - USE_XWAYLAND=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /run/user/1000:/run/user/1000:rw
+    devices:
+      - /dev/dri:/dev/dri
+  gilde-client:
+    environment:
+      - DISPLAY=:99
+      - USE_XWAYLAND=0
+    devices:
+      - /dev/dri:/dev/dri
