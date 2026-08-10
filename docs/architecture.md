@@ -491,6 +491,10 @@ This is a false positive - the code is open source and can be audited.
 3. **Network statistics** - Track packet loss, retries, latency
 4. **Hot-reload configuration** - Change settings without restart
 
+### Harness (xdotool + Lua)
+
+`harness/` is `gilde-net` + `Xvfb :99 1024x768` (same pidns, `ffmpeg`) + `drivers/{host,client,common}.sh` (`xdotool` + `lua_probe` stub + `check_frame.py`) + `lua/`/`luaapi.asi` opt-in (`harness/LUA_INTEGRATION.md`). `0x42980D` `6b7e94` evt race documented in `harness/README.md`.
+
 ### Extension Points
 
 The architecture supports adding:

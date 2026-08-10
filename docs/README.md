@@ -54,6 +54,9 @@ If you want to understand the problem and solution:
 | File | Description | Audience |
 |------|-------------|----------|
 | [architecture.md](architecture.md) | Technical architecture and hook implementation | Developers |
+| [../harness/README.md](../harness/README.md) | Harness (xdotool + Lua) | Harness/Research |
+| [../harness/LUA_INTEGRATION.md](../harness/LUA_INTEGRATION.md) | Harness ↔ Lua sister | Harness/Research |
+| [../handoff.md](../handoff.md) | Handoff / handover | All |
 | [problem-analysis.md](problem-analysis.md) | Root cause analysis and solution design | All |
 | [development-guide.md](development-guide.md) | Building, debugging, and contributing | Developers |
 | [configuration.md](configuration.md) | Configuration options and tuning | Advanced users |

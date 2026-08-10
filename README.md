@@ -200,6 +200,10 @@ file and skips cleanly when none are present. See
 - **Connection Recovery**: Test network interruption recovery and retry logic functionality
 - **Performance Impact**: Measure any performance impact from the network hooks during gameplay
 
+## Harness (game test — xdotool + Lua)
+
+`harness/` runs `Europa1400Gold_TL.exe` in `Xvfb :99 1024x768` **in the same pidns as Wine** (or `Xwayland :92 1024x768 radeonsi` via `USE_XWAYLAND=1`), fresh `WINEARCH=win32` prefix (`setup_the_guild_gold_2.0.0.5.exe /VERYSILENT`), `gilde-net 10.10.0.0/24` isolated, `ffmpeg 1024x768` + `import` screenshots, `tc netem loss 10%` (`GC_LOSS` or `harness/netem.sh --scenario packet-loss`), drivers `host:99/client:98` `windowactivate → windowmove 0,0 → warm-up 8s → Down×3→Return` (`geom 0 0`) + optional `luaapi.asi` sister (`LUA_CONSOLE=1`) via `harness/LUA_INTEGRATION.md` and `harness/drivers/common.sh` helpers (`lua_probe/shot/check_frame.py`). See `harness/README.md` + `docs/development-guide.md` Harness Prefix: Win32 not WoW64 + `handoff.md`.
+
 ## Documentation
 
 Comprehensive documentation is available in the [docs/](docs/) directory:
