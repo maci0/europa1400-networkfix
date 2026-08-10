@@ -21,4 +21,6 @@ Lua is reserved for *state checks*: `ui.find("Network")`, `system.window_info`, 
 selection index — once `luaapi` exposes a named pipe/flag, `lua_probe()` in the drivers will call
 `game.call("ui_probe")` instead of blind key repeats.
 
+Dropping `harness/lua/harness_probe.lua` auto-runs after `lua/init.lua` and writes `/tmp/lua_Network.ok` etc. — drivers `lua_probe` polls these flags.
+
 See `europa1400-lua/scripts/lua/ui.lua` — `ui.windows()/ui.find()` sugar.
