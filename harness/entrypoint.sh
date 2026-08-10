@@ -186,7 +186,7 @@ if [[ -f "$HOOK_LOG" ]]; then
   fi
 fi
 
-# Keep X server until exit (no-op when using host X)
+# Keep X server until exit (no-op when using host X — stop host daemon via harness/scripts/start-xwayland.sh --stop)
 if [[ -n "${XVFB_PID:-}" ]]; then kill "$XVFB_PID" 2>/dev/null || true; wait "$XVFB_PID" 2>/dev/null || true; fi
 
 # Screenshot on exit (if game left framebuffer)
