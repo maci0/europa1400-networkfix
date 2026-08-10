@@ -12,7 +12,7 @@ RUN dpkg --add-architecture i386 && \
     wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        winehq-staging winetricks xvfb xauth xdotool x11-utils imagemagick iproute2 iputils-ping net-tools tini bash python3 python3-pip strace cabextract unzip fontconfig fonts-dejavu-core ffmpeg xserver-xephyr x11-xserver-utils xserver-xorg-video-dummy weston mesa-utils libgl1-mesa-dri && \
+        winehq-staging winetricks xvfb xauth xdotool wmctrl x11-utils imagemagick scrot iproute2 iputils-ping net-tools tini bash python3 python3-pip strace cabextract unzip fontconfig fonts-dejavu-core ffmpeg xserver-xephyr x11-xserver-utils xserver-xorg-video-dummy weston mesa-utils libgl1-mesa-dri && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 RUN if ! id gilde 2>/dev/null; then if id ubuntu 2>/dev/null; then usermod -l gilde ubuntu && usermod -d /home/gilde -m gilde 2>/dev/null || useradd -m gilde; else useradd -m gilde; fi; fi; mkdir -p /home/gilde && chown gilde:gilde /home/gilde 2>/dev/null || chown 1000:1000 /home/gilde
 ENV WINEPREFIX=/home/gilde/pfx

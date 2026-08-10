@@ -149,6 +149,16 @@ if [[ "$DRIVER" != "none" ]]; then
   fi
 fi
 
+# --- optional lua console (sister project europa1400-lua) ---
+if [[ "${LUA_CONSOLE:-0}" == "1" && -f "/harness/luaapi.asi" ]]; then
+  echo "[entrypoint] LUA_CONSOLE=1 installing luaapi.asi + lua scripts" | tee -a "$LOG_DIR/entrypoint.log"
+  mkdir -p "$WINEPREFIX/drive_c/Guild/lua"
+  cp -f /harness/luaapi.asi "$WINEPREFIX/drive_c/Guild/luaapi.asi" 2>/dev/null || true
+  if [[ -d "/harness/lua" ]]; then cp -rf /harness/lua/* "$WINEPREFIX/drive_c/Guild/lua/" 2>/dev/null || true; fi
+else
+  if [[ "${LUA_CONSOLE:-0}" == "1" ]]; then echo "[entrypoint] LUA_CONSOLE requested but /harness/luaapi.asi missing" | tee -a "$LOG_DIR/entrypoint.log"; fi
+fi
+
 # --- wait for game to exit (with hook_log tail) ---
 echo "[entrypoint] Waiting for game (tail hook_log)..." | tee -a "$LOG_DIR/entrypoint.log"
 # Stream hook_log if it appears
