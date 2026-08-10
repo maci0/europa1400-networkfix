@@ -29,7 +29,7 @@ docker compose -f harness/docker-compose.yml up --abort-on-container-exit
   * accelerated: dedicated `Xwayland :92 -geometry 1024x768` on host (one root, `radeonsi` via `/dev/dri`), shared read-only into containers via `/tmp/.X11-unix:ro` — `entrypoint.sh` detects `USE_XWAYLAND=1 + /tmp/.X11-unix/X92` and uses `DISPLAY=:92` with `privileged: true` for DRI auth. Requires `harness/scripts/start-xwayland.sh` before `compose -f docker-compose.yml -f docker-compose.xwayland.yml up`. Keeps `gilde-net` isolation (network stays `10.10.0.0/24`, only display socket crosses).
 * Silent install tweaks: `game.ini` `Bildmodus=DIRECTWINDOW`, `show_intro=0`, `cur_res=2` (1024x768) applied at runtime if present.
 * ASI is bind-mounted to `/harness/networkfix.asi` and copied to `C:\Guild\networkfix.asi` before launch (Wine auto-loads ASI).
-* Drivers: `drivers/host.sh` waits for `Europa|Gilde|Guild` window (`xdotool search --name`/`--class wine`) then best-effort clicks to reach Multiplayer — calibrate with `final.png` + `xwininfo` dump.
+* Drivers: `drivers/host.sh` `windowmove 0 0` (game `1030x748` → root `1024x768`, clip 6px acceptable; `xdotool` coords window-relative) then waits for `Europa|Gilde|Guild` window (`xdotool search --name`/`--class wine`) then best-effort clicks to reach Multiplayer — calibrate with `final.png` + `xwininfo` dump.
 
 ## Isolated network
 
