@@ -114,6 +114,16 @@ SCREENSHOT_PID=$!
 
 trap 'for _pid in ${FFMPEG_PID:-} ${SCREENSHOT_PID:-}; do kill "$_pid" 2>/dev/null || true; done; sleep 1; exit 0' TERM INT
 
+# --- optional lua console (sister project europa1400-lua) — install BEFORE game so ASI autoloads ---
+if [[ "${LUA_CONSOLE:-0}" == "1" && -f "/harness/luaapi.asi" ]]; then
+  echo "[entrypoint] LUA_CONSOLE=1 installing luaapi.asi + lua scripts" | tee -a "$LOG_DIR/entrypoint.log"
+  mkdir -p "$WINEPREFIX/drive_c/Guild/lua"
+  cp -f /harness/luaapi.asi "$WINEPREFIX/drive_c/Guild/luaapi.asi" 2>/dev/null || true
+  if [[ -d "/harness/lua" ]]; then cp -rf /harness/lua/* "$WINEPREFIX/drive_c/Guild/lua/" 2>/dev/null || true; fi
+else
+  if [[ "${LUA_CONSOLE:-0}" == "1" ]]; then echo "[entrypoint] LUA_CONSOLE requested but /harness/luaapi.asi missing" | tee -a "$LOG_DIR/entrypoint.log"; fi
+fi
+
 # --- launch game (Wine handles ASI autoload via game dir) ---
 GAME_LOG="$LOG_DIR/game.log"
 HOOK_LOG="$WINEPREFIX/drive_c/Guild/hook_log.txt"
@@ -128,16 +138,6 @@ set +e
 wine "$GAME_EXE" ${GAME_ARGS:-} >"$GAME_LOG" 2>&1 &
 GAME_PID=$!
 echo "[entrypoint] Wine PID $GAME_PID" | tee -a "$LOG_DIR/entrypoint.log"
-
-# --- optional lua console (sister project europa1400-lua) — before game so ASI loads ---
-if [[ "${LUA_CONSOLE:-0}" == "1" && -f "/harness/luaapi.asi" ]]; then
-  echo "[entrypoint] LUA_CONSOLE=1 installing luaapi.asi + lua scripts" | tee -a "$LOG_DIR/entrypoint.log"
-  mkdir -p "$WINEPREFIX/drive_c/Guild/lua"
-  cp -f /harness/luaapi.asi "$WINEPREFIX/drive_c/Guild/luaapi.asi" 2>/dev/null || true
-  if [[ -d "/harness/lua" ]]; then cp -rf /harness/lua/* "$WINEPREFIX/drive_c/Guild/lua/" 2>/dev/null || true; fi
-else
-  if [[ "${LUA_CONSOLE:-0}" == "1" ]]; then echo "[entrypoint] LUA_CONSOLE requested but /harness/luaapi.asi missing" | tee -a "$LOG_DIR/entrypoint.log"; fi
-fi
 
 # --- optional xdotool driver ---
 DRIVER_PID=""
