@@ -33,8 +33,8 @@ RUN mkdir -p /tmp/dxwrapper /harness && \
     rm /tmp/dxwrapper/dx8.zip
 COPY setup_the_guild_gold_2.0.0.5.exe /tmp/setup.exe
 RUN mkdir -p /home/gilde/pfx && \
-    timeout 120 xvfb-run --auto-servernum -s "-screen 0 1280x1024x24 -ac +extension GLX +render -noreset" wine wineboot --init 2>&1 | tail -n 30; sleep 2; \
-    timeout 300 xvfb-run --auto-servernum -s "-screen 0 1280x1024x24 -ac +extension GLX +render -noreset" wine /tmp/setup.exe /VERYSILENT /DIR=C:\\Guild 2>&1 | tail -n 100; \
+    timeout 120 xvfb-run --auto-servernum -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" wine wineboot --init 2>&1 | tail -n 30; sleep 2; \
+    timeout 300 xvfb-run --auto-servernum -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" wine /tmp/setup.exe /VERYSILENT /DIR=C:\\Guild 2>&1 | tail -n 100; \
     echo "--- install exit $? ---"; ls -lh /home/gilde/pfx/drive_c/Guild/ 2>&1 | head -n 80; \
     if [ -f /home/gilde/pfx/drive_c/Guild/game.ini ]; then sed -i 's/^Bildmodus=.*\r$/Bildmodus=DIRECTWINDOW\r/' /home/gilde/pfx/drive_c/Guild/game.ini || true; sed -i 's/^show_intro=.*\r$/show_intro=0\r/' /home/gilde/pfx/drive_c/Guild/game.ini || true; sed -i 's/^cur_res=.*\r$/cur_res=2\r/' /home/gilde/pfx/drive_c/Guild/game.ini || true; cat /home/gilde/pfx/drive_c/Guild/game.ini | head -n 40; fi; \
     cp /harness/d3d8.dll /harness/dxwrapper.dll /harness/dxwrapper.ini /home/gilde/pfx/drive_c/Guild/ 2>/dev/null || true; \

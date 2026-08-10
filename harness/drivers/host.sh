@@ -1,6 +1,6 @@
 #!/bin/bash
 # Host driver: waits for window, creates lobby, waits for client, starts mission.
-# Coordinates are 1280x1024 reference; uses xdotool with --sync and window activation.
+# Coordinates are 1024x768 reference; uses xdotool with --sync and window activation.
 set -euo pipefail
 LOG_DIR="${LOG_DIR:-/tmp}"
 LOG="${LOG_DIR}/driver.log"
@@ -25,6 +25,8 @@ if [[ -z "$WID" ]]; then
 fi
 xdotool windowactivate --sync "$WID" 2>/dev/null || true
 sleep 1
+# Move game window to 0,0 to match Xwayland/Xvfb 1024x768 root exactly (no gray border, easier automation)
+xdotool windowmove "$WID" 0 0 2>/dev/null || true; sleep 0.5
 # If winedbg crash dialog appears, dismiss it
 for _ in $(seq 1 5); do
   DBG=$(xdotool search --name "Program Error|Wine Debugger" 2>/dev/null | head -n1 || true)
@@ -42,7 +44,7 @@ xdotool key --window "$WID" Escape 2>/dev/null || true; sleep 1
 
 # Window geometry
 read -r WX WY WW WH < <(xdotool getwindowgeometry --shell "$WID" 2>/dev/null | awk -F= '/X=/{x=$2} /Y=/{y=$2} /WIDTH/{w=$2} /HEIGHT/{h=$2} END{print x, y, w, h}')
-WW="${WW:-1280}"; WH="${WH:-1024}"
+WW="${WW:-1024}"; WH="${WH:-768}"
 echo "[driver:host] geom $WX $WY ${WW}x${WH}" | tee -a "$LOG"
 # Longer warm-up: container wine initializes evt tables slower (poll loop at 0x42980D needs 0x6b7e94 allocated)
 sleep 8
