@@ -105,6 +105,21 @@ over `gilde-net` with `networkfix.asi` + evt guard active. Step screenshots in
 - Click targets: rendered position with **y + 43** (wine client-area offset)
   at 1152x864 (`cur_res=2`; Xwayland runs `-geometry 1152x864` to match).
 
+## Session timing (measured)
+
+From `compose up`: game menu ~30s, host lobby ~45s, client connected ~50s,
+both Ready ~55s, in-game ~4:35. The ~170s between Ready and in-game is the
+game's own paced initial-state sync: the server streams the town snapshot at
+about two 145-byte packets per 30ms tick (~10KB/s, visible with
+`HARNESS_NET_TRACE=1`), then a burst of 24-byte object packets. This floor is
+invariant: GPU rendering, town choice, ready ordering and the network fix all
+leave it unchanged, and accelerating the winmm tick (timeSetEvent hook, 2x or
+4x) desyncs the start handshake so the session never launches. Treat ~5 min
+wall-clock per full E2E as the game's authentic cost.
+
+`HARNESS_NET_TRACE=1` hex-dumps server.dll send/recv payloads to hook_log for
+protocol debugging.
+
 ## Debugging crashes
 
 The game's own shutdown path crashes (`0x46B2CC`) when init fails, masking the
