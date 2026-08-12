@@ -67,6 +67,18 @@ for r in 1 2 3 4 5; do
 done
 shot client_ready
 
+# --- in-game: wait for town data, then play and watch for desync ---
+echo "[driver:client] waiting for in-game (town data)" | tee -a "$LOG"
+sleep 25
+if dismiss_year_scroll; then echo "[driver:client] in-game (town view)" | tee -a "$LOG"; shot client_ingame
+else echo "[driver:client] year scroll not dismissed" | tee -a "$LOG"; fi
+if play_town "${PLAY_ITERS:-30}" "$WID"; then
+  echo "[driver:client] gameplay completed, session healthy" | tee -a "$LOG"
+else
+  echo "[driver:client] gameplay ended early (session lost/desync)" | tee -a "$LOG"
+fi
+shot client_final
+
 while kill -0 "${GAME_PID:-1}" 2>/dev/null; do
   echo "[driver:client] heartbeat $(date -Iseconds)" >>"$LOG" 2>/dev/null || true
   sleep 15

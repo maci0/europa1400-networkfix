@@ -47,6 +47,59 @@ hide_lua_console() {
   c=$(xdotool search --onlyvisible --name "Lua Console" 2>/dev/null | head -n1 || true)
   [ -n "$c" ] && xdotool windowunmap "$c" 2>/dev/null || true
 }
+
+# Click coords are rendered position + 43 (wine client-area Y offset), 1152x864.
+# dismiss_year_scroll — click Continue until the year-start scroll clears to the
+# town view (top status bar appears). Returns 0 once in-game.
+dismiss_year_scroll() {
+  for _ in $(seq 1 10); do
+    # town view differs from the scroll in the top-bar strip (x300 y0 500x60)
+    local before; before=$(crop_md5 300 0 500 60)
+    lua_do "click(575,706)"; sleep 3
+    [ "$(crop_md5 300 0 500 60)" != "$before" ] && return 0
+  done
+  return 1
+}
+
+# desync_alive WID — true while the game session is healthy: process window
+# still present AND title still the in-game title (a drop reverts to a menu/
+# dialog or the window vanishes). Also fails on known fatal log strings.
+desync_alive() {
+  local wid="$1"
+  xdotool getwindowname "$wid" 2>/dev/null | grep -qi "Europa 1400" || return 1
+  # game.log fatal markers (connection lost / terminating / desync)
+  if grep -qaiE "connection (lost|closed)|terminating|desync|disconnect" \
+      "${LOG_DIR:-/tmp}/game.log" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
+# play_town — light in-game activity that generates synced command traffic:
+# left-click ground points (character move), interspersed with waits so the
+# game clock advances and both peers exchange state. $1 = iterations.
+play_town() {
+  local n="${1:-20}" wid="$2" i
+  local xs="380 560 300 640 460 520 360 600"
+  local ys="520 480 600 560 440 620 500 540"
+  set -- $xs; local -a X=("$@")
+  set -- $ys; local -a Y=("$@")
+  for i in $(seq 1 "$n"); do
+    local k=$(( i % 8 ))
+    lua_do "click(${X[$k]},${Y[$k]})"
+    sleep 3
+    if [ $(( i % 5 )) -eq 0 ]; then
+      shot "play_${i}"
+      if [ -n "${wid:-}" ] && ! desync_alive "$wid"; then
+        echo "[play] SESSION LOST at iteration $i" | tee -a "$LOG"
+        shot "desync_${i}"
+        return 1
+      fi
+      echo "[play] iteration $i ok" | tee -a "$LOG"
+    fi
+  done
+  return 0
+}
 wait_window() {
   for i in $(seq 1 60); do
     WID=$(xdotool search --onlyvisible --name "Europa|Gilde|Guild" 2>/dev/null | head -n1 || true)

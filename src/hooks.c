@@ -55,6 +55,10 @@ void test_sleep(DWORD ms);
 
 // Global state
 static BOOL      g_HooksInitialized = false;
+// When false (NETWORKFIX_DISABLE=1) the ws2/stream hooks are still installed
+// (so harness fault-injection, tracing and fastsync keep working) but they
+// pass through with the game's original semantics: this is the A/B baseline.
+static BOOL      g_fix_active = true;
 static DWORD     g_server_rva = 0;
 static HMODULE   g_hServerDll = NULL;
 static uintptr_t g_server_base = 0;
@@ -388,6 +392,13 @@ DWORD WINAPI hook_GetTickCount(void)
  */
 int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
 {
+    // Baseline (fix off): pass straight through with no NULL guard or clamping,
+    // so the unpatched desync behaviour is faithfully reproduced for A/B.
+    if (!g_fix_active)
+    {
+        return real_srv_gameStreamReader(ctx, received, totalLen);
+    }
+
     // Validate parameters
     if (!ctx)
     {
@@ -420,6 +431,36 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
     }
 
     return ret;
+}
+
+/* Harness-only fault injection (HARNESS_TINY_BUFFERS=N): shrink SO_SNDBUF/
+ * SO_RCVBUF on each server.dll socket to N bytes the first time we see it, so
+ * send() hits WSAEWOULDBLOCK constantly during active play. This reproduces
+ * the exact desync the fix targets (the original game does not retry a partial
+ * send), without needing host kernel netem. Applied once per socket. */
+static void maybe_shrink_buffers(SOCKET s)
+{
+    static int  tiny = -1; // -1 unknown, 0 off, >0 target bytes
+    static SOCKET seen[64];
+    static int    seen_n = 0;
+    if (tiny == -1)
+    {
+        char v[8] = {0};
+        tiny = (GetEnvironmentVariableA("HARNESS_TINY_BUFFERS", v, sizeof(v)) > 0) ? atoi(v) : 0;
+        if (tiny < 0)
+            tiny = 0;
+    }
+    if (tiny == 0)
+        return;
+    for (int i = 0; i < seen_n; i++)
+        if (seen[i] == s)
+            return;
+    if (seen_n < (int)(sizeof(seen) / sizeof(seen[0])))
+        seen[seen_n++] = s;
+    int val = tiny;
+    setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char *)&val, sizeof(val));
+    setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&val, sizeof(val));
+    logf("[TINY BUF] socket=%u SO_SNDBUF/SO_RCVBUF set to %d bytes", (unsigned)s, val);
 }
 
 /* Harness-only payload tracing (HARNESS_NET_TRACE=1): hex-dump the first bytes
@@ -470,10 +511,18 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
         logf("[WS2 HOOK] recv: Suspicious parameters: buf=%p, len=%d (hex=0x%08X)", buf, len, (unsigned int)len);
     }
 
+    maybe_shrink_buffers(s);
     int result = real_recv(s, buf, len, flags);
     if (result > 0)
     {
         trace_payload("recv", buf, result);
+    }
+
+    // Baseline (fix off): return exactly what Windows returned, no WSAEWOULDBLOCK
+    // conversion, matching the unpatched game.
+    if (!g_fix_active)
+    {
+        return result;
     }
 
     if (result == SOCKET_ERROR)
@@ -532,7 +581,14 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 
     logf_rate_limited("send_called", "[WS2 HOOK] send: called from server.dll: socket=%u, len=%d, flags=0x%X",
                       (unsigned)s, len, flags);
+    maybe_shrink_buffers(s);
     trace_payload("send", buf, len);
+
+    // Baseline (fix off): reproduce the original game's single, no-retry send.
+    if (!g_fix_active)
+    {
+        return real_send(s, buf, len, flags);
+    }
 
     // Log suspicious parameters but don't block - let the loop handle them naturally
     // (Original HarryTheBird version: while(total < len) exits immediately if len <= 0)
@@ -893,19 +949,22 @@ BOOL init_hooks(void)
 
     logf("[HOOK] Initialization started (PID: %lu, TID: %lu)", GetCurrentProcessId(), GetCurrentThreadId());
 
-    // Baseline mode for harness A/B runs: same ASI loaded, network fix off,
-    // optional evt guard still available so headless runs stay alive.
-    BOOL fix_enabled = !env_flag("NETWORKFIX_DISABLE");
-    if (!fix_enabled)
+    // A/B baseline: NETWORKFIX_DISABLE=1 keeps the hooks installed but makes
+    // them pass through with the original game semantics (see g_fix_active
+    // checks in the hook bodies), so harness fault-injection, tracing and
+    // fastsync stay available and only the fix behaviour is toggled.
+    g_fix_active = !env_flag("NETWORKFIX_DISABLE");
+    if (!g_fix_active)
     {
-        logf("[HOOK] NETWORKFIX_DISABLE=1: network fix hooks disabled (baseline mode)");
+        logf("[HOOK] NETWORKFIX_DISABLE=1: fix behaviour off (hooks pass through, baseline mode)");
     }
 
-    // Initialize server.dll module (load, detect version, set up ranges)
-    BOOL server_ok = fix_enabled && init_server_module();
-    if (fix_enabled && !server_ok)
+    // Initialize server.dll module (load, detect version, set up ranges).
+    // Always done: the ws2 hooks need caller-gating and fastsync needs the base.
+    BOOL server_ok = init_server_module();
+    if (!server_ok)
     {
-        logf("[HOOK] Failed to initialize server module, continuing without network fix");
+        logf("[HOOK] Failed to initialize server module, continuing without network hooks");
     }
 
     // Initialize MinHook library using MH_Initialize()
@@ -919,7 +978,7 @@ BOOL init_hooks(void)
 
     logf("[HOOK] MinHook initialized successfully");
 
-    // Create network fix hooks (only when server.dll resolved)
+    // Create hooks (installed regardless of fix state; behaviour is gated inside)
     if (server_ok && !create_hooks())
     {
         logf("[HOOK] Some hooks failed to create");
