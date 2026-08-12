@@ -72,7 +72,10 @@ echo "[driver:client] waiting for in-game (town data)" | tee -a "$LOG"
 sleep 25
 if dismiss_year_scroll; then echo "[driver:client] in-game (town view)" | tee -a "$LOG"; shot client_ingame
 else echo "[driver:client] year scroll not dismissed" | tee -a "$LOG"; fi
-if play_town "${PLAY_ITERS:-30}" "$WID"; then
+if [[ "${ENDURANCE:-0}" == "1" ]]; then
+  endurance_run "$WID"
+  echo "[driver:client] ENDURANCE ended (see endur_fail_* shots + log)" | tee -a "$LOG"
+elif play_town "${PLAY_ITERS:-30}" "$WID"; then
   echo "[driver:client] gameplay completed, session healthy" | tee -a "$LOG"
 else
   echo "[driver:client] gameplay ended early (session lost/desync)" | tee -a "$LOG"

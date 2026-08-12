@@ -433,6 +433,44 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
     return ret;
 }
 
+/*
+ * TCP_NODELAY: the game never sets it (verified: server.dll has no
+ * IPPROTO_TCP setsockopt), so Nagle's algorithm holds every sub-MSS packet
+ * until the previous one is ACKed. The protocol is small-message and latency
+ * sensitive (command packets, per-tick sync), so on any link with a non-trivial
+ * delayed-ACK Nagle adds up to a full delayed-ACK interval (~40ms on Linux) of
+ * latency per exchange. Disabling it is safe for this traffic shape and only
+ * helps. Applied once per server.dll socket; part of the fix, so the A/B
+ * baseline (g_fix_active=false) keeps the original Nagle behaviour. Force
+ * Nagle back on for testing with NETWORKFIX_NODELAY=0. */
+static void maybe_set_nodelay(SOCKET s)
+{
+    if (!g_fix_active)
+        return;
+
+    static int    enabled = -1; // -1 unknown, 0 off, 1 on
+    static SOCKET seen[64];
+    static int    seen_n = 0;
+    if (enabled == -1)
+    {
+        char v[2] = {0};
+        // Default on; only "0" disables.
+        enabled = (GetEnvironmentVariableA("NETWORKFIX_NODELAY", v, sizeof(v)) == 1 && v[0] == '0') ? 0 : 1;
+    }
+    if (enabled == 0)
+        return;
+    for (int i = 0; i < seen_n; i++)
+        if (seen[i] == s)
+            return;
+    if (seen_n < (int)(sizeof(seen) / sizeof(seen[0])))
+        seen[seen_n++] = s;
+    int one = 1;
+    if (setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof(one)) == 0)
+        logf("[NODELAY] socket=%u TCP_NODELAY enabled (Nagle off)", (unsigned)s);
+    else
+        logf_rate_limited("nodelay_fail", "[NODELAY] socket=%u setsockopt failed: %d", (unsigned)s, WSAGetLastError());
+}
+
 /* Harness-only fault injection (HARNESS_TINY_BUFFERS=N): shrink SO_SNDBUF/
  * SO_RCVBUF on each server.dll socket to N bytes the first time we see it, so
  * send() hits WSAEWOULDBLOCK constantly during active play. This reproduces
@@ -511,6 +549,7 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
         logf("[WS2 HOOK] recv: Suspicious parameters: buf=%p, len=%d (hex=0x%08X)", buf, len, (unsigned int)len);
     }
 
+    maybe_set_nodelay(s);
     maybe_shrink_buffers(s);
     int result = real_recv(s, buf, len, flags);
     if (result > 0)
@@ -581,6 +620,7 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 
     logf_rate_limited("send_called", "[WS2 HOOK] send: called from server.dll: socket=%u, len=%d, flags=0x%X",
                       (unsigned)s, len, flags);
+    maybe_set_nodelay(s);
     maybe_shrink_buffers(s);
     trace_payload("send", buf, len);
 
