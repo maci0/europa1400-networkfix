@@ -1,89 +1,115 @@
-# Harness — isolated Wine containers with virtual framebuffer + xdotool
+# Harness: fully headless multiplayer testbed (Docker + Wine + weston)
 
-Uses Docker Compose isolated bridge `gilde-net` (10.10.0.0/24) so containers only see each other — mimics `guild-network-test/run_netns.sh` without Flatpak/nsenter. Silent installer via `setup_the_guild_gold_2.0.0.5.exe /VERYSILENT /DIR=C:\Guild` (reference: `GILDE/gilde-docker/Dockerfile:43`, `GILDE/guild-network-test/setup.sh:27`).
+Two isolated containers (`gilde-host` / `gilde-client`) on a private bridge
+(`gilde-net` 10.10.0.0/24) run the game under Wine with `networkfix.asi`
+loaded, drive it via xdotool, and record video/screenshots. Everything renders
+inside the containers (headless weston + Xwayland): no host X server, no
+windows on your desktop, no GPU required.
+
+## The stack (and why each part exists)
+
+| Layer | Why |
+|-------|-----|
+| weston `--backend=headless` + rootful `Xwayland :99 -geometry 1024x768` | The game's init enumerates D3D adapters/modes; it needs the RandR mode list Xwayland provides. Plain Xvfb has no usable mode list → init fails → shutdown-path crash at `0x46B2CC`. |
+| i386 GL libraries (`libgl1:i386`, `libgl1-mesa-dri:i386`, …) | Wine here is 32-bit; without them wined3d finds no GL at all (`Failed to find a suitable pixel format`). 64-bit `glxinfo` working proves nothing. |
+| `WINEDLLOVERRIDES="…;d3d8=n,b"` (set by `entrypoint.sh`) | Loads the native dxwrapper `d3d8.dll`. Without the override Wine silently uses builtin d3d8 and dxwrapper is inert. |
+| dxwrapper `D3d8to9=1` + `SetPOW2Caps=1` | POW2 caps fix for the D3D8 surface-sizing UI bug. |
+| dxwrapper `[Plugins] LoadPlugins=1` | Actually loads `*.asi` from `C:\Guild`. Miles (mss32) only scans ASI providers when audio init succeeds, which it does not headless: without this the harness never loaded `networkfix.asi` at all. Verify via `logs/*/hook_log.txt`. |
+| `game.ini` `ServerPath=Server\server.dll` (relative, set by `entrypoint.sh`) | networkfix rejects absolute server paths; the installer writes an absolute one. |
+| `HARNESS_EVT_GUARD=1` | Env-gated NULL guard in networkfix.asi for the game's evt poll (`0x429800`): skips the tick while the `evt:` tables (`[0x6B7E94]`) are unallocated/freed. Belt-and-braces against the headless init race (`0x42980D`). |
+| `NETWORKFIX_DISABLE=1` | Baseline mode for A/B runs: same ASI, network-fix hooks off, evt guard still available. |
 
 ## Build
 
 ```bash
-# Place installer next to Dockerfile if you want baked game (optional; otherwise bind-mount a prebuilt pfx)
-cp ~/Desktop/Projects/Europa1400/GILDE/setup_the_guild_gold_2.0.0.5.exe harness/
+cp <path>/setup_the_guild_gold_2.0.0.5.exe harness/   # once, baked into image
 docker compose -f harness/docker-compose.yml build
-# or
-docker build -t gilde-harness harness/
 ```
-
-Base is `ubuntu:24.04` + `winehq-staging` (latest) + `xvfb` + `xdotool` + `imagemagick` + `iproute2` — upgrades reference Alpine `wine-staging` to latest Wine.
 
 ## Run
 
 ```bash
+make            # bin/networkfix.asi
 mkdir -p harness/logs/host harness/logs/client
-make -C ../  # builds bin/networkfix.asi
 docker compose -f harness/docker-compose.yml up --abort-on-container-exit
-# Logs:
-#   harness/logs/{host,client}/game.log  hook_log.tail  hook_log.txt  xvfb.log  driver.log  final.png
+# A/B baseline (patch off, still crash-free):
+NETWORKFIX_DISABLE=1 docker compose -f harness/docker-compose.yml up
 ```
 
-* X server per container:
-  * default: Xvfb `:99 1024x768x24` per container (isolated, no host X) — up to `llvmpipe` on 0x42980D evt table (`6b7e94` NULL) headless path.
-  * accelerated: dedicated `Xwayland :92 -geometry 1024x768` on host (one root, `radeonsi` via `/dev/dri`), shared read-only into containers via `/tmp/.X11-unix:ro` — `entrypoint.sh` detects `USE_XWAYLAND=1 + /tmp/.X11-unix/X92` and uses `DISPLAY=:92` with `privileged: true` for DRI auth. Requires `harness/scripts/start-xwayland.sh` before `compose -f docker-compose.yml -f docker-compose.xwayland.yml up` (writes `/tmp/xwayland:92.pid`; `harness/scripts/start-xwayland.sh --stop` after). Keeps `gilde-net` isolation (network stays `10.10.0.0/24`, only display socket crosses).
-* Silent install tweaks: `game.ini` `Bildmodus=DIRECTWINDOW`, `show_intro=0`, `cur_res=2` (1024x768) applied at runtime if present.
-* ASI is bind-mounted to `/harness/networkfix.asi` and copied to `C:\Guild\networkfix.asi` before launch (Wine auto-loads ASI).
-* Drivers: `drivers/host.sh` `windowmove 0 0` (game `1030x748` → root `1024x768`, clip 6px acceptable; `xdotool` coords window-relative) then waits for `Europa|Gilde|Guild` window (`xdotool search --name`/`--class wine`) then best-effort clicks to reach Multiplayer — calibrate with `final.png` + `xwininfo` dump.
+Logs per container in `harness/logs/{host,client}/`: `game.log`,
+`hook_log.txt` (must contain "All hooks enabled successfully"),
+`entrypoint.log`, `weston.log`, `xvfb.log` (Xwayland), `driver.log`,
+`record.mp4`, `screenshot_*.png`, `final.png`.
 
-## Isolated network
+### Optional GPU rendering
 
-`docker-compose.yml` declares `gilde-net` bridge; DNS names `gilde-host`/`gilde-client` resolve inside net. No `network_mode: host`.
-
-Verify:
+Default is llvmpipe (software, portable, CI-safe, stable). For radeonsi:
 
 ```bash
-docker compose exec gilde-host ping -c2 gilde-client
-docker compose exec gilde-client ping -c2 10.10.0.2
+RENDER_GID=$(stat -c %g /dev/dri/renderD128) \
+  docker compose -f harness/docker-compose.yml -f harness/docker-compose.gpu.yml up
 ```
 
-## Netem (packet loss / latency)
+Still fully headless: the render node is used offscreen.
 
-Per-container via `tc netem` on `eth0` inside netns (needs `cap_add: NET_ADMIN`):
+### X_BACKEND
+
+`X_BACKEND=weston` (default) is the only mode where the game survives.
+`X_BACKEND=xvfb` is kept for debugging the X stack itself; expect the game to
+fail init (no RandR modes) and die within ~15 s.
+
+## Isolated network + netem
+
+`gilde-net` bridge, DNS names `gilde-host`/`gilde-client`, no host networking.
 
 ```bash
-# Apply 10% loss to both
-./harness/netem.sh --scenario packet-loss
-# Only host, high latency
-./harness/netem.sh --scenario high-latency --service gilde-host
-# Or via env at start:
-GC_LOSS=10% docker compose up
-GC_DELAY="100ms 50ms distribution normal" docker compose up
+./harness/netem.sh --scenario packet-loss          # 10% loss both peers
+GC_LOSS=10% docker compose -f harness/docker-compose.yml up
 ./harness/netem.sh --clear
-./harness/netem.sh --status --service gilde-host
 ```
 
-Scenarios: `high-latency`, `variable-latency`, `packet-loss`, `reorder`, `duplicate`, `corrupt` (same as `guild-network-test/netem_inject.sh`).
+Scenarios: `high-latency`, `variable-latency`, `packet-loss`, `reorder`,
+`duplicate`, `corrupt` (needs `sch_netem` on the host kernel: see
+`NETEM_NOTE.md` if `qdisc kind is unknown`).
 
-## xdotool
+## Drivers: lua-driven multiplayer lobby (full flow automated)
 
-Drivers use `xdotool search/ windowactivate/ getwindowgeometry/ mousemove/ click/ key`. First run will need calibration — grab `harness/logs/*/final.png` and `xwininfo -root -tree` from driver logs. Reference has no xdotool driver (only `start.sh` injector); this harness adds it as requested.
+With the lua overlay the drivers build a REAL multiplayer session end-to-end:
 
-## Reference material
+```bash
+docker compose -f harness/docker-compose.yml -f harness/docker-compose.lua.yml \
+  up --abort-on-container-exit
+```
 
-- `GILDE/gilde-docker/Dockerfile:43` `/VERYSILENT /DIR=C:\Guild`, `game.ini` sed tweaks.
-- `GILDE/guild-network-test/run_netns.sh` (bridge + veth + netns + `tc qdisc netem`).
-- `GILDE/guild-network-test/setup.sh` (flatpak Wine silent install).
+Host: Network → Start New Game → Start Game As Server → players=2 Continue →
+London → Continue → **lobby** → waits for client → Ready. Client: Network →
+Join An Existing Game → server appears via LAN broadcast (no IP entry) →
+Connect → Ready. Both peers then load into the game ("Receiving town data...")
+over `gilde-net` with `networkfix.asi` + evt guard active. Step screenshots in
+`logs/*/screenshot_*_{multiplayer,lobby,browser,connect*,ready}.png`.
 
-## Video fix (POW2 bug)
+### Input model (hard-won, do not rediscover)
 
-Europa1400 Gold has a D3D8 bug on modern Windows: `GetDeviceCaps` no longer
-reports `D3DPTEXTURECAPS_POW2` → `FN_allocate_image_surface 0x04770A0` mis-sizes
-surfaces → truncated UI. Fixed via dxwrapper (`elishacloud/dxwrapper`
-v1.7.8400.25 `dx8.games.zip` `6d301af…`, `D3d8to9=1` + `SetPOW2Caps=1`).
+- xdotool/XTest clicks reach the main menu but NOT submenu buttons: the game
+  tracks its own DirectInput cursor. Blind Escape/Return on the main menu
+  quits the game.
+- Working method: inject from INSIDE the process. `harness/lua/init.lua`
+  (loaded by `luaapi.asi`) replaces the REPL with a command loop: drivers write
+  lua to `/tmp/lua_cmd.lua` (`lua_do` helper in `common.sh`), it runs
+  `SetCursorPos` + `mouse_event`/`keybd_event`, result lands in
+  `/tmp/lua_out.txt`. The AllocConsole window is unmapped by the driver
+  (`hide_lua_console`).
+- `game.ini mouse_speed` MUST be 256 (entrypoint enforces): the game scales
+  relative mouse deltas by mouse_speed/256, so any other value breaks
+  synthetic coordinates.
+- Click targets: rendered position with **y + 43** (wine client-area offset)
+  at 1152x864 (`cur_res=2`; Xwayland runs `-geometry 1152x864` to match).
 
-This harness auto-installs it: `Dockerfile` downloads and verifies the zip,
-`entrypoint.sh` copies `d3d8.dll`/`dxwrapper.dll`/`dxwrapper.ini` to
-`C:\Guild`. Without it the game may crash at `0x42980D` on `wine 11.14`.
+## Debugging crashes
 
-Local native run: `./harness/dxwrapper/fetch.sh` fetches the DLLs, or
-copy to `GILDE/guild-network-test/wpf*/drive_c/Guild/` manually.
-
-## Known: 0x42980D headless crash
-
-`Europa1400Gold_TL.exe+0x42980D` (`fcn.00429800`) is a polling loop over `0x6b7e94+esi` (`0x64c00` evt table, init by `fcn.00429920`). On plain Xvfb headless the table stays NULL and the `cmp byte [eax],bl` faults ~10 s after boot even staying on main menu (verified container, while host `Xwayland :1/:92` allocates it and survives 30 s on Network). `dxwrapper v1.7.8400.25 SetPOW2Caps=1` fixes the earlier D3D8 POW2 UI crash; this `0x42980D` is a separate evt-init race — workaround is the accelerated Xwayland path above (see `harness/artifacts/VIDEO_INDEX.md`).
+The game's own shutdown path crashes (`0x46B2CC`) when init fails, masking the
+real error. To find the actual failure: run the game under `winedbg` with
+breakpoints on the init-failure returns in `0x538850` (see git history of this
+harness for the exact recipe), or set `WINEDEBUG=fixme-all,err+all` and read
+`game.log`. Init-failure history so far: missing i386 GL (pixel format), then
+missing RandR modes (Xvfb): both fixed by the stack above.
