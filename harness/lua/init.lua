@@ -42,6 +42,15 @@ function dblclick(x, y)
   click(x, y); k32.Sleep(180); click(x, y)
 end
 
+local MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP = 0x0008, 0x0010
+function rclick(x, y)
+  u32.SetCursorPos(x, y)
+  k32.Sleep(120)
+  u32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+  k32.Sleep(100)
+  u32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+end
+
 -- vk: virtual-key code (0x0D Return, 0x26 Up, 0x28 Down, 0x25 Left, 0x27 Right, 0x1B Esc)
 function key(vk)
   u32.keybd_event(vk, 0, 0, 0)

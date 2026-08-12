@@ -59,6 +59,19 @@ lua_do "click(705,544)"                                       # Ready -> game st
 sleep 3
 shot host_ready
 
+# --- in-game: wait for town data, then play and watch for desync ---
+# Town view appears after the ~20s (fastsync) transfer + year-start scroll
+echo "[driver:host] waiting for in-game (town data)" | tee -a "$LOG"
+sleep 25
+if dismiss_year_scroll; then echo "[driver:host] in-game (town view)" | tee -a "$LOG"; shot host_ingame
+else echo "[driver:host] year scroll not dismissed (maybe not in-game yet)" | tee -a "$LOG"; fi
+if play_town "${PLAY_ITERS:-30}" "$WID"; then
+  echo "[driver:host] gameplay completed, session healthy" | tee -a "$LOG"
+else
+  echo "[driver:host] gameplay ended early (session lost/desync)" | tee -a "$LOG"
+fi
+shot host_final
+
 # Keep alive while game runs; heartbeat for harness logs
 while kill -0 "${GAME_PID:-1}" 2>/dev/null; do
   echo "[driver:host] heartbeat $(date -Iseconds)" >>"$LOG" 2>/dev/null || true

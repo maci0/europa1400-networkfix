@@ -123,6 +123,44 @@ pacing; baseline mode (`NETWORKFIX_DISABLE=1`) never patches.
 `HARNESS_NET_TRACE=1` hex-dumps server.dll send/recv payloads to hook_log for
 protocol debugging.
 
+## Gameplay + desync testing
+
+The drivers no longer stop at the lobby: after both peers reach the town view
+they run `play_town` (character-move clicks that generate synced command
+traffic) while `desync_alive` watches for a dropped session (window title
+revert, process death, fatal log strings). `PLAY_ITERS` sets the length.
+
+Fault-injection knobs in networkfix.asi (all env-gated, applied independently
+of the fix so the A/B stays fair):
+
+- `NETWORKFIX_DISABLE=1` — faithful baseline: hooks stay installed but pass
+  through with the original game semantics (single no-retry send, no
+  WSAEWOULDBLOCK conversion, no stream-reader clamp). Only the fix behaviour is
+  toggled, so both arms see identical machinery/stress.
+- `HARNESS_TINY_BUFFERS=N` — shrink each server.dll socket's SO_SNDBUF/SO_RCVBUF
+  to N bytes so the sender fills quickly under any congestion.
+
+Local bridge caveat: on a clean docker bridge, normal gameplay does NOT desync
+with or without the fix, because TCP is reliable and drains instantly. To
+exercise the fix's send-retry path you must create real back-pressure by
+freezing a peer so its receive window closes and the sender's (tiny) send
+buffer fills: `HARNESS_TINY_BUFFERS=4096` then `kill -STOP` the client's game
+process during a transfer.
+
+Confirmed with a sustained freeze, fix ON: the host logs
+`send: WSAEWOULDBLOCK, send buffer likely full (retry 1/5000)` …
+`retry 4595/5000` … and, once the freeze outlasts the ~5s retry budget, a
+graceful `Max retries exceeded, sent 0/145 bytes` (WSAETIMEDOUT) instead of a
+silent partial send. This is the exact path the baseline drops with no retry.
+
+Timing note: a *brief* freeze is unreliable to A/B because `fastsync` makes the
+transfer so fast that the send-buffer-full window is tiny — a randomly-timed
+freeze usually misses it. For a clean pass/fail comparison, freeze on the first
+observed 145B send (`HARNESS_NET_TRACE=1`), or use netem for a steady
+degradation (`GC_LOSS`, needs `sch_netem` — see `NETEM_NOTE.md`). The SIGSTOP
+method is what forces the send-buffer-full path that netem alone does not
+produce on a fast link.
+
 ## Debugging crashes
 
 The game's own shutdown path crashes (`0x46B2CC`) when init fails, masking the
