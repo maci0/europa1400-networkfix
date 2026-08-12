@@ -19,10 +19,11 @@ services:
       - GC_CORRUPT=${GC_CORRUPT:-}
       - GC_RATE=${GC_RATE:-}
       - DRIVER=auto
+      - X_BACKEND=${X_BACKEND:-weston}
+      - HARNESS_EVT_GUARD=${HARNESS_EVT_GUARD:-1}
+      - NETWORKFIX_DISABLE=${NETWORKFIX_DISABLE:-0}
     cap_add:
       - NET_ADMIN
-    devices:
-      - /dev/dri:/dev/dri
     volumes:
       - ./logs/host:/home/gilde/logs
       - ../bin/networkfix.asi:/harness/networkfix.asi:ro
@@ -55,10 +56,11 @@ services:
       # ideal: CLEAN_PREFIX=1 for fully clean prefix (winecfg+setup 300s)
       - CLEAN_PREFIX=0
       - DRIVER=auto
+      - X_BACKEND=${X_BACKEND:-weston}
+      - HARNESS_EVT_GUARD=${HARNESS_EVT_GUARD:-1}
+      - NETWORKFIX_DISABLE=${NETWORKFIX_DISABLE:-0}
     cap_add:
       - NET_ADMIN
-    devices:
-      - /dev/dri:/dev/dri
     volumes:
       - ./logs/client:/home/gilde/logs
       - ../bin/networkfix.asi:/harness/networkfix.asi:ro

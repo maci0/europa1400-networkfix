@@ -17,6 +17,7 @@ GAMEDIR="${GAMEDIR:-C:\\Guild}"
 GAME_EXE="${GAME_EXE:-Europa1400Gold_TL.exe}"
 DRIVER="${DRIVER:-auto}"
 LOG_DIR="/home/gilde/logs"
+export LOG_DIR
 
 mkdir -p "$LOG_DIR"
 if [[ "${CLEAN_PREFIX:-0}" != "0" ]]; then
@@ -48,6 +49,10 @@ if [[ -f "$GAME_INI" ]]; then
   sed -i 's/^\([Bb]ildmodus=\).*$/\1DIRECTWINDOW\r/' "$GAME_INI" 2>/dev/null || true
   sed -i 's/^\([Ss]how_intro=\).*$/\1 0\r/' "$GAME_INI" 2>/dev/null || true
   sed -i 's/^\([Cc]ur_res=\).*$/\12\r/' "$GAME_INI" 2>/dev/null || true
+  # networkfix.asi rejects absolute server paths, so force the relative default
+  sed -i 's/^\([Ss]erver\([Pp]ath\)\?=\).*$/\1Server\\server.dll\r/' "$GAME_INI" 2>/dev/null || true
+  # mouse_speed=256 = 1:1 pointer scaling; anything else breaks synthetic input coords
+  sed -i 's/^\(mouse_speed=\).*$/\1256\r/' "$GAME_INI" 2>/dev/null || true
   echo "[entrypoint] Patched $GAME_INI" | tee -a "$LOG_DIR/entrypoint.log"
 fi
 
@@ -71,41 +76,37 @@ if [[ -f "/harness/dxwrapper.fixed.ini" ]]; then
   echo "[entrypoint] Installed dxwrapper.fixed.ini -> dxwrapper.ini" | tee -a "$LOG_DIR/entrypoint.log"
 fi
 
-# --- X server: prefer host Xwayland passthrough if requested, else isolated Xvfb ---
+# --- X server: in-container only. X_BACKEND=weston (default: headless weston + rootful Xwayland,
+# needed for the RandR mode list the game's adapter enumeration requires; GPU via /dev/dri if present,
+# llvmpipe otherwise) | xvfb (debug only; game init fails without RandR modes) ---
 XVFB_LOG="$LOG_DIR/xvfb.log"
-if [[ "${USE_XWAYLAND:-0}" == "1" && -S /tmp/.X11-unix/X92 ]]; then
-  echo "[entrypoint] USE_XWAYLAND=1 — using dedicated Xwayland :92 (isolated root 1024x768, host GPU radeonsi)" | tee -a "$LOG_DIR/entrypoint.log"
-  export DISPLAY=":92"
-  DISPLAY_NUM=":92"
-  XVFB_PID=""
-  for i in $(seq 1 30); do xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 && break; sleep 0.2; done
-  xdpyinfo -display "$DISPLAY" 2>&1 | head -n 10 | tee -a "$LOG_DIR/xvfb.log" || true
-elif [[ "${USE_HOST_X:-0}" == "1" && -S /tmp/.X11-unix/X1 ]]; then
-  echo "[entrypoint] USE_HOST_X=1 — using host Xwayland :1 (isolated gilde-net, host DRI)" | tee -a "$LOG_DIR/entrypoint.log"
-  # host Xwayland :1 mounted via /tmp/.X11-unix + XAUTHORITY; fix perms for container user gilde
-  if [[ -n "${XAUTHORITY:-}" && -f "$XAUTHORITY" ]]; then chmod 644 "$XAUTHORITY" 2>/dev/null || true; fi
-  chmod 755 /tmp/.X11-unix 2>/dev/null || true
-  export DISPLAY=":1"
-  DISPLAY_NUM=":1"
-  XVFB_PID=""
-  # wait for host socket
-  for i in $(seq 1 30); do xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 && break; sleep 0.2; done
-  xdpyinfo -display "$DISPLAY" 2>&1 | head -n 10 | tee -a "$LOG_DIR/xvfb.log" || true
+WESTON_PID=""
+chmod 777 /tmp 2>/dev/null || true; rm -f /tmp/.X99-lock /tmp/.X98-lock 2>/dev/null || true
+if [[ "${X_BACKEND:-weston}" == "weston" ]]; then
+  echo "[entrypoint] Starting weston headless + Xwayland $DISPLAY_NUM (1152x864)" | tee -a "$LOG_DIR/entrypoint.log"
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg}"
+  mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+  weston --backend=headless-backend.so --renderer=gl --width=1160 --height=880 --socket=wayland-1 >"$LOG_DIR/weston.log" 2>&1 &
+  WESTON_PID=$!
+  for i in $(seq 1 50); do [[ -S "$XDG_RUNTIME_DIR/wayland-1" ]] && break; sleep 0.2; done
+  WAYLAND_DISPLAY=wayland-1 Xwayland "$DISPLAY_NUM" -geometry 1152x864 -ac -noreset >"$XVFB_LOG" 2>&1 &
+  XVFB_PID=$!
 else
-  chmod 777 /tmp 2>/dev/null || true; rm -f /tmp/.X99-lock /tmp/.X98-lock 2>/dev/null || true
   echo "[entrypoint] Starting Xvfb $DISPLAY_NUM (1024x768x24)" | tee -a "$LOG_DIR/entrypoint.log"
   Xvfb "$DISPLAY_NUM" -screen 0 1024x768x24 -ac +extension GLX +render -noreset >"$XVFB_LOG" 2>&1 &
   XVFB_PID=$!
-  for i in $(seq 1 30); do xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1 && break; sleep 0.2; done
-  export DISPLAY="$DISPLAY_NUM"
 fi
-echo "[entrypoint] DISPLAY=$DISPLAY (XVFB_PID=${XVFB_PID:-none})" | tee -a "$LOG_DIR/entrypoint.log"
+for i in $(seq 1 30); do xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1 && break; sleep 0.2; done
+export DISPLAY="$DISPLAY_NUM"
+glxinfo -B 2>/dev/null | grep -E 'renderer string' | tee -a "$LOG_DIR/entrypoint.log" || true
+echo "[entrypoint] DISPLAY=$DISPLAY (XVFB_PID=${XVFB_PID:-none} WESTON_PID=${WESTON_PID:-none})" | tee -a "$LOG_DIR/entrypoint.log"
 
 # --- ffmpeg x11grab recording (if available) ---
 FFMPEG_PID=""
 if command -v ffmpeg >/dev/null 2>&1; then
   echo "[entrypoint] Starting ffmpeg x11grab $DISPLAY -> $LOG_DIR/record.mp4" | tee -a "$LOG_DIR/entrypoint.log"
-  ffmpeg -y -video_size 1024x768 -framerate 10 -f x11grab -i "$DISPLAY" -vcodec libx264 -pix_fmt yuv420p -preset ultrafast -movflags +faststart "$LOG_DIR/record.mp4" >"$LOG_DIR/ffmpeg.log" 2>&1 &
+  # -draw_mouse 0: Xwayland rootful fails xcb pointer queries, killing x11grab mid-run
+  ffmpeg -y -video_size 1152x864 -framerate 10 -draw_mouse 0 -f x11grab -i "$DISPLAY" -vcodec libx264 -pix_fmt yuv420p -preset ultrafast -movflags +faststart "$LOG_DIR/record.mp4" >"$LOG_DIR/ffmpeg.log" 2>&1 &
   FFMPEG_PID=$!
 fi
 # periodic screenshots
@@ -124,7 +125,7 @@ else
   if [[ "${LUA_CONSOLE:-0}" == "1" ]]; then echo "[entrypoint] LUA_CONSOLE requested but /harness/luaapi.asi missing" | tee -a "$LOG_DIR/entrypoint.log"; fi
 fi
 
-# --- launch game (Wine handles ASI autoload via game dir) ---
+# --- launch game (dxwrapper LoadPlugins loads *.asi from game dir) ---
 GAME_LOG="$LOG_DIR/game.log"
 HOOK_LOG="$WINEPREFIX/drive_c/Guild/hook_log.txt"
 echo "[entrypoint] Launching $GAME_EXE ROLE=$ROLE (WINEPREFIX=$WINEPREFIX) ..." | tee -a "$LOG_DIR/entrypoint.log"
@@ -132,6 +133,8 @@ echo "[entrypoint] Launching $GAME_EXE ROLE=$ROLE (WINEPREFIX=$WINEPREFIX) ..." 
 cd "$WINEPREFIX/drive_c/Guild" 2>/dev/null || true
 # Unset SDL video driver that breaks Wine
 unset SDL_VIDEODRIVER
+# Load native dxwrapper d3d8.dll (POW2 fix + LoadPlugins ASI loader); builtin d3d8 would bypass it
+export WINEDLLOVERRIDES="mscoree,mshtml=;d3d8=n,b"
 
 # Use wineserver -w at end; capture PID via winedbg or just wine
 set +e
@@ -186,8 +189,9 @@ if [[ -f "$HOOK_LOG" ]]; then
   fi
 fi
 
-# Keep X server until exit (no-op when using host X — stop host daemon via harness/scripts/start-xwayland.sh --stop)
+# Tear down in-container X stack
 if [[ -n "${XVFB_PID:-}" ]]; then kill "$XVFB_PID" 2>/dev/null || true; wait "$XVFB_PID" 2>/dev/null || true; fi
+if [[ -n "${WESTON_PID:-}" ]]; then kill "$WESTON_PID" 2>/dev/null || true; wait "$WESTON_PID" 2>/dev/null || true; fi
 
 # Screenshot on exit (if game left framebuffer)
 if command -v import >/dev/null 2>&1; then
