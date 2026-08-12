@@ -25,6 +25,22 @@ wait_lua_ready() {
   for _ in $(seq 1 60); do [ -f /tmp/lua_Ready.ok ] && return 0; sleep 1; done
   return 1
 }
+# crop_md5 x y w h — md5 of a root-window region (cursor-safe change detection)
+crop_md5() {
+  import -window root -crop "${3}x${4}+${1}+${2}" /tmp/crop_wait.png 2>/dev/null
+  md5sum /tmp/crop_wait.png 2>/dev/null | cut -d' ' -f1
+}
+# wait_crop_change x y w h timeout_s — true once the region's content changes
+wait_crop_change() {
+  local base
+  base=$(crop_md5 "$1" "$2" "$3" "$4")
+  local tries=$(( $5 / 2 ))
+  for _ in $(seq 1 "$tries"); do
+    sleep 2
+    [ "$(crop_md5 "$1" "$2" "$3" "$4")" != "$base" ] && return 0
+  done
+  return 1
+}
 # hide_lua_console — the AllocConsole window covers the game; unmap it
 hide_lua_console() {
   local c

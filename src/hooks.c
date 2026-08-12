@@ -422,6 +422,26 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
     return ret;
 }
 
+/* Harness-only payload tracing (HARNESS_NET_TRACE=1): hex-dump the first bytes
+ * of server.dll traffic so protocol stalls can be diagnosed from hook_log. */
+static void trace_payload(const char *dir, const char *buf, int len)
+{
+    static int trace_state = -1; // -1 unknown, 0 off, 1 on
+    if (trace_state == -1)
+    {
+        char v[2] = {0};
+        trace_state = (GetEnvironmentVariableA("HARNESS_NET_TRACE", v, sizeof(v)) == 1 && v[0] == '1') ? 1 : 0;
+    }
+    if (trace_state != 1 || !buf || len <= 0)
+        return;
+    char hex[3 * 48 + 1];
+    int  n = len < 48 ? len : 48;
+    for (int i = 0; i < n; i++)
+        sprintf(hex + i * 3, "%02X ", (unsigned char)buf[i]);
+    hex[n * 3] = '\0';
+    logf("[NET TRACE] %s len=%d: %s", dir, len, hex);
+}
+
 /**
  * Hook for recv() Winsock function to handle non-blocking socket errors.
  * Converts WSAEWOULDBLOCK errors to 0-byte receives for server.dll calls.
@@ -451,6 +471,10 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
     }
 
     int result = real_recv(s, buf, len, flags);
+    if (result > 0)
+    {
+        trace_payload("recv", buf, result);
+    }
 
     if (result == SOCKET_ERROR)
     {
@@ -508,6 +532,7 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 
     logf_rate_limited("send_called", "[WS2 HOOK] send: called from server.dll: socket=%u, len=%d, flags=0x%X",
                       (unsigned)s, len, flags);
+    trace_payload("send", buf, len);
 
     // Log suspicious parameters but don't block - let the loop handle them naturally
     // (Original HarryTheBird version: while(total < len) exits immediately if len <= 0)
@@ -826,6 +851,9 @@ BOOL init_hooks(void)
     }
 
     // Optional harness-only evt guard (env-gated, independent of network fix)
+    // Note: a timeSetEvent tick-boost was tried here to accelerate the paced
+    // town-data transfer; any boost (2x, 4x) desyncs the start handshake and
+    // the session never launches. The pacing is authentic game behavior.
     BOOL guard_ok = create_evt_guard_hook();
 
     if (!server_ok && !guard_ok)

@@ -27,25 +27,44 @@ if ! wait_lua_ready; then
   exit 0
 fi
 
-# Host needs ~60s from boot to lobby; browse after that
-echo "[driver:client] lua ready — waiting for host lobby" | tee -a "$LOG"
-sleep 55
+# Host needs ~50s from boot to lobby; open the browser slightly before that
+echo "[driver:client] lua ready — heading to server browser" | tee -a "$LOG"
+sleep 30
 
-lua_do "click(585,516)"; sleep 4                              # Network
-lua_do "click(575,468)"; sleep 5; shot client_browser         # Join An Existing Game
-for attempt in 1 2 3; do
+lua_do "click(585,516)"; sleep 3                              # Network
+lua_do "click(575,468)"; sleep 4; shot client_browser         # Join An Existing Game
+# Event-driven connect: server list entry area (x460 y380 250x25) fills once the
+# host lobby broadcasts; then select + Connect, and the Connect button region
+# vanishing tells us we entered the lobby.
+joined=0
+for attempt in 1 2 3 4 5 6; do
   echo "[driver:client] connect attempt $attempt" | tee -a "$LOG"
   lua_do "click(560,390)"; sleep 1                            # select server entry
-  lua_do "click(405,730)"; sleep 8                            # Connect
-  shot "client_connect${attempt}"
-  # Joined when the browser is gone; crude check: Refresh button area no longer present
-  # (cheap heuristic: just try Ready; a miss on the browser screen is harmless)
-  lua_do "click(578,730)"; sleep 3                            # Refresh (no-op if already in lobby)
+  base=$(crop_md5 340 675 130 30)                             # Connect button area, pre-click
+  lua_do "click(405,730)"                                     # Connect
+  for _ in 1 2 3 4 5 6; do
+    sleep 2
+    if [ "$(crop_md5 340 675 130 30)" != "$base" ]; then joined=1; break; fi
+  done
+  [[ "$joined" == "1" ]] && break
+  lua_do "click(578,730)"; sleep 4                            # Refresh, retry
 done
-sleep 5
-echo "[driver:client] clicking Ready" | tee -a "$LOG"
-lua_do "click(705,544)"                                       # Ready
-sleep 3
+shot client_lobby
+if [[ "$joined" == "1" ]]; then echo "[driver:client] joined lobby" | tee -a "$LOG"; else echo "[driver:client] join not confirmed — trying Ready anyway" | tee -a "$LOG"; fi
+sleep 4   # lobby settle before Ready registers
+# Ready with confirmation: OWN row (second row, y205) gains "** Ready **".
+# Row 1 is the host's row — watching it false-confirms on the host's marker.
+for r in 1 2 3 4 5; do
+  echo "[driver:client] clicking Ready (attempt $r)" | tee -a "$LOG"
+  base=$(crop_md5 200 205 350 28)
+  lua_do "click(705,544)"
+  ok=0
+  for _ in 1 2 3; do
+    sleep 2
+    if [ "$(crop_md5 200 205 350 28)" != "$base" ]; then ok=1; break; fi
+  done
+  [[ "$ok" == "1" ]] && { echo "[driver:client] Ready confirmed (own row)" | tee -a "$LOG"; break; }
+done
 shot client_ready
 
 while kill -0 "${GAME_PID:-1}" 2>/dev/null; do

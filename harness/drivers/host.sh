@@ -30,22 +30,33 @@ if ! wait_lua_ready; then
   exit 0
 fi
 echo "[driver:host] lua ready — creating server lobby" | tee -a "$LOG"
-sleep 5   # let the menu settle
+sleep 3   # let the menu settle
 
-lua_do "click(585,516)"; sleep 4;  shot host_multiplayer      # Network
-lua_do "click(575,431)"; sleep 4                              # Start New Game
-lua_do "click(575,431)"; sleep 4                              # Start Game As Server
-lua_do "click(578,558)"; sleep 8                              # Number of players: Continue (default 2)
-lua_do "click(605,283)"; sleep 3                              # Town: London
-lua_do "click(487,821)"; sleep 10; shot host_lobby            # Map: Continue -> lobby
-echo "[driver:host] lobby up — waiting for client to join" | tee -a "$LOG"
+lua_do "click(585,516)"; sleep 3;  shot host_multiplayer      # Network
+lua_do "click(575,431)"; sleep 3                              # Start New Game
+lua_do "click(575,431)"; sleep 3                              # Start Game As Server
+lua_do "click(578,558)"; sleep 6                              # Number of players: Continue (default 2)
+lua_do "click(605,283)"; sleep 2                              # Town: London
+lua_do "click(487,821)"; sleep 8; shot host_lobby             # Map: Continue -> lobby
+echo "[driver:host] lobby up — waiting for client to join (watching player list)" | tee -a "$LOG"
 
-# Give the client time to boot, browse, connect (it readies itself first)
-sleep 60
+# Event-driven: the second row of "Registered players" (x200 y205 350x30) changes
+# the moment the client registers — no fixed timer
+if wait_crop_change 200 205 350 30 120; then
+  echo "[driver:host] client joined — waiting for its Ready marker" | tee -a "$LOG"
+  # Same row changes again when the client's "** Ready **" marker appears
+  if wait_crop_change 200 205 350 30 40; then
+    echo "[driver:host] client is Ready" | tee -a "$LOG"
+  else
+    echo "[driver:host] no client Ready marker in 40s — proceeding" | tee -a "$LOG"
+  fi
+else
+  echo "[driver:host] no join detected in 120s — clicking Ready anyway" | tee -a "$LOG"
+fi
 shot host_lobby_prestart
 echo "[driver:host] clicking Ready" | tee -a "$LOG"
 lua_do "click(705,544)"                                       # Ready -> game starts when all ready
-sleep 5
+sleep 3
 shot host_ready
 
 # Keep alive while game runs; heartbeat for harness logs
