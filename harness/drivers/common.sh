@@ -75,6 +75,72 @@ desync_alive() {
   return 0
 }
 
+# topbar_mean — mean brightness (0..65535) of the in-game status bar strip.
+# High (~34k) when the parchment bar is visible; low (~21k) when a fullscreen
+# scroll/dialog (year-end, error) covers it. Used to detect blocking modals.
+topbar_mean() {
+  import -window root -crop 500x55+330+8 miff:- 2>/dev/null \
+    | convert miff:- -colorspace Gray -format '%[fx:mean*65535]' info: 2>/dev/null
+}
+
+# max_speed — click the clock a few times to raise game speed to max. The clock
+# face is at rendered (1085,45) -> click (1085,88); repeated clicks step the
+# speed up (measured ~3x advance after 5 clicks). Year-start resets it, so the
+# endurance loop re-calls this after each dismissed year modal.
+max_speed() {
+  for _ in 1 2 3 4 5; do lua_do "click(1085,88)"; sleep 0.3; done
+}
+
+# endurance_run WID — max speed, then run indefinitely: pass years at max speed,
+# dismiss the year-end modal(s) whenever the status bar is covered, and watch
+# for failure (window/title gone, fatal log line, or a modal that will not
+# clear). On failure, screenshot + dump log tail and return 1.
+endurance_run() {
+  local wid="$1" start now el iter=0 years=0 stuck=0 mean
+  start=$(date +%s)
+  echo "[endur] setting max speed" | tee -a "$LOG"
+  max_speed
+  echo "[endur] running until failure" | tee -a "$LOG"
+  while true; do
+    sleep 12
+    iter=$((iter + 1))
+    now=$(date +%s); el=$((now - start))
+
+    # --- failure: window/title gone or fatal log line ---
+    if ! xdotool getwindowname "$wid" 2>/dev/null | grep -qi "Europa 1400"; then
+      echo "[endur] FAIL: game window/title gone at ${el}s (iter $iter, ~$years years)" | tee -a "$LOG"
+      shot "endur_fail_window_${el}"; tail -n 40 "${LOG_DIR}/game.log" >>"$LOG" 2>/dev/null || true
+      return 1
+    fi
+    if grep -qaiE "connection (lost|closed)|terminating|desync|disconnect|synchron" "${LOG_DIR}/game.log" 2>/dev/null; then
+      echo "[endur] FAIL: fatal log line at ${el}s (~$years years)" | tee -a "$LOG"
+      shot "endur_fail_log_${el}"; grep -aiE "connection|terminat|desync|disconn|synchron" "${LOG_DIR}/game.log" | tail -n 20 >>"$LOG" 2>/dev/null || true
+      return 1
+    fi
+
+    # --- year-end / blocking modal: status bar covered ---
+    mean=$(topbar_mean); mean=${mean%.*}
+    if [ -n "$mean" ] && [ "$mean" -lt 28000 ] 2>/dev/null; then
+      stuck=$((stuck + 1))
+      echo "[endur] modal at ${el}s (bar mean=$mean, streak=$stuck) — dismissing" | tee -a "$LOG"
+      shot "endur_modal_${el}"
+      # year-end can stack several panels; click both button positions a few times
+      for _ in 1 2 3; do lua_do "click(575,706)"; sleep 1; lua_do "click(662,706)"; sleep 1; done
+      if [ "$stuck" -ge 6 ]; then
+        echo "[endur] FAIL: modal would not clear after ${stuck} tries at ${el}s (~$years years) — likely error dialog" | tee -a "$LOG"
+        shot "endur_fail_stuck_${el}"; tail -n 40 "${LOG_DIR}/game.log" >>"$LOG" 2>/dev/null || true
+        return 1
+      fi
+      years=$((years + 1))
+      sleep 2; max_speed   # year start resets speed
+    else
+      stuck=0
+    fi
+
+    [ $((iter % 5)) -eq 0 ] && echo "[endur] alive ${el}s iter=$iter years~=$years bar=$mean" | tee -a "$LOG"
+  done
+}
+
 # play_town — light in-game activity that generates synced command traffic:
 # left-click ground points (character move), interspersed with waits so the
 # game clock advances and both peers exchange state. $1 = iterations.
