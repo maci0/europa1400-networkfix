@@ -1,0 +1,20 @@
+# GPU overlay: gives the default headless weston + Xwayland stack the host render
+# node (radeonsi instead of llvmpipe). Fully headless: nothing appears on the
+# desktop. Only needed if llvmpipe is too slow or you want GPU-accurate rendering.
+# Usage: RENDER_GID=$(stat -c %g /dev/dri/renderD128) \
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+services:
+  gilde-host:
+    environment:
+      - X_BACKEND=weston
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-989}"
+  gilde-client:
+    environment:
+      - X_BACKEND=weston
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-989}"

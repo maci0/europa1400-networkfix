@@ -12,6 +12,25 @@ lua_probe() {
   return 1
 }
 shot() { import -window root "$SHOT_DIR/screenshot_$(date +%s)_$1.png" 2>/dev/null || true; }
+# lua_do "click(1,2)" — run lua source in-process via the harness init.lua command loop
+lua_do() {
+  rm -f /tmp/lua_out.txt
+  printf '%s\nreturn 1' "$1" > /tmp/lua_cmd.lua
+  for _ in $(seq 1 40); do [ -f /tmp/lua_out.txt ] && return 0; sleep 0.5; done
+  echo "[lua_do] timeout waiting for lua_out: $1" >&2
+  return 1
+}
+# wait_lua_ready — true once the in-process command loop wrote its Ready flag
+wait_lua_ready() {
+  for _ in $(seq 1 60); do [ -f /tmp/lua_Ready.ok ] && return 0; sleep 1; done
+  return 1
+}
+# hide_lua_console — the AllocConsole window covers the game; unmap it
+hide_lua_console() {
+  local c
+  c=$(xdotool search --onlyvisible --name "Lua Console" 2>/dev/null | head -n1 || true)
+  [ -n "$c" ] && xdotool windowunmap "$c" 2>/dev/null || true
+}
 wait_window() {
   for i in $(seq 1 60); do
     WID=$(xdotool search --onlyvisible --name "Europa|Gilde|Guild" 2>/dev/null | head -n1 || true)

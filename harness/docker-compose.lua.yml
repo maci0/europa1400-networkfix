@@ -1,0 +1,20 @@
+# Lua-driven lobby overlay: mounts the europa1400-lua console (sister project)
+# so the drivers can inject input from inside the game process and build a real
+# multiplayer session (host lobby + client join + Ready).
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.lua.yml up --abort-on-container-exit
+# Override LUAAPI if europa1400-lua is not checked out next to this repo:
+#   LUAAPI=/path/to/luaapi.asi docker compose ...
+services:
+  gilde-host:
+    environment:
+      - LUA_CONSOLE=1
+    volumes:
+      - ${LUAAPI:-../../europa1400-lua/bin/luaapi.asi}:/harness/luaapi.asi:ro
+      - ./lua:/harness/lua:ro
+  gilde-client:
+    environment:
+      - LUA_CONSOLE=1
+    volumes:
+      - ${LUAAPI:-../../europa1400-lua/bin/luaapi.asi}:/harness/luaapi.asi:ro
+      - ./lua:/harness/lua:ro
