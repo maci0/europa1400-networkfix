@@ -100,7 +100,7 @@ jobs:
 
       - name: Upload to GitHub Release (latest — rolling on main)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.3.2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2.3.3.0.2
         with:
           tag_name: latest
           name: Latest Build
@@ -111,7 +111,7 @@ jobs:
 
       - name: Publish versioned release (on tag v*)
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.3.2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2.3.3.0.2
         with:
           files: bin/networkfix.asi
           generate_release_notes: true
