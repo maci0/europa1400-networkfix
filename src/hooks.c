@@ -676,6 +676,65 @@ static BOOL create_hook_api(const wchar_t *module, const char *function, void *h
     }
 }
 
+/*
+ * Harness-only guard for the game's evt poll loop (Europa1400Gold_TL.exe
+ * 0x429800). The loop dereferences the evt:command_entry table pointer at
+ * [0x6B7E94] every tick; under headless Wine the tick fires while the table
+ * is not (yet/anymore) allocated, faulting at 0x42980D. The allocator
+ * (0x429920) publishes 0x6B7E94 last and the free path (0x4298C8) clears it,
+ * so a NULL check on that single pointer is sufficient to skip the poll.
+ * Opt-in via HARNESS_EVT_GUARD=1; the target bytes are signature-checked so
+ * any other game build is left untouched.
+ */
+#define EVT_POLL_ADDR ((LPVOID)0x429800)
+#define EVT_TABLE_PTR ((void *volatile *)0x6B7E94)
+/* push ebx; push esi; xor ebx,ebx; xor esi,esi; mov eax,[0x6B7E94]; add eax,esi */
+static const uint8_t evt_poll_sig[] = {0x53, 0x56, 0x33, 0xDB, 0x33, 0xF6, 0xA1,
+                                       0x94, 0x7E, 0x6B, 0x00, 0x03, 0xC6};
+static void(__cdecl *real_evt_poll)(void) = NULL;
+
+static void __cdecl hook_evt_poll(void)
+{
+    if (*EVT_TABLE_PTR == NULL)
+    {
+        logf_rate_limited("evt_guard", "[EVT GUARD] evt table NULL, poll skipped");
+        return;
+    }
+    real_evt_poll();
+}
+
+/* Reads a "1"-valued environment flag (harness contract). */
+static BOOL env_flag(const char *name)
+{
+    char value[2] = {0};
+    return GetEnvironmentVariableA(name, value, sizeof(value)) == 1 && value[0] == '1';
+}
+
+/* Best-effort: failure only means the harness guard is off, never fails init. */
+static BOOL create_evt_guard_hook(void)
+{
+    if (!env_flag("HARNESS_EVT_GUARD"))
+        return FALSE;
+
+    uint8_t bytes[sizeof(evt_poll_sig)];
+    SIZE_T  n = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), EVT_POLL_ADDR, bytes, sizeof(bytes), &n) || n != sizeof(bytes) ||
+        memcmp(bytes, evt_poll_sig, sizeof(bytes)) != 0)
+    {
+        logf("[EVT GUARD] Signature mismatch at %p, guard not installed", EVT_POLL_ADDR);
+        return FALSE;
+    }
+
+    MH_STATUS status = MH_CreateHook(EVT_POLL_ADDR, hook_evt_poll, (void **)&real_evt_poll);
+    if (status == MH_OK)
+    {
+        logf("[EVT GUARD] Installed evt poll NULL guard at %p", EVT_POLL_ADDR);
+        return TRUE;
+    }
+    logf("[EVT GUARD] MH_CreateHook failed: %d", (int)status);
+    return FALSE;
+}
+
 /**
  * Creates and initializes all hook functions using MinHook library.
  * Sets up hooks for both Windows API functions and server.dll internals.
@@ -731,11 +790,19 @@ BOOL init_hooks(void)
 
     logf("[HOOK] Initialization started (PID: %lu, TID: %lu)", GetCurrentProcessId(), GetCurrentThreadId());
 
-    // Initialize server.dll module (load, detect version, set up ranges)
-    if (!init_server_module())
+    // Baseline mode for harness A/B runs: same ASI loaded, network fix off,
+    // optional evt guard still available so headless runs stay alive.
+    BOOL fix_enabled = !env_flag("NETWORKFIX_DISABLE");
+    if (!fix_enabled)
     {
-        logf("[HOOK] Failed to initialize server module");
-        return FALSE;
+        logf("[HOOK] NETWORKFIX_DISABLE=1: network fix hooks disabled (baseline mode)");
+    }
+
+    // Initialize server.dll module (load, detect version, set up ranges)
+    BOOL server_ok = fix_enabled && init_server_module();
+    if (fix_enabled && !server_ok)
+    {
+        logf("[HOOK] Failed to initialize server module, continuing without network fix");
     }
 
     // Initialize MinHook library using MH_Initialize()
@@ -743,15 +810,27 @@ BOOL init_hooks(void)
     if (status != MH_OK)
     {
         logf("[HOOK] MH_Initialize failed: %d", (int)status);
+        reset_server_globals();
         return FALSE;
     }
 
     logf("[HOOK] MinHook initialized successfully");
 
-    // Create all hooks
-    if (!create_hooks())
+    // Create network fix hooks (only when server.dll resolved)
+    if (server_ok && !create_hooks())
     {
         logf("[HOOK] Some hooks failed to create");
+        MH_Uninitialize();
+        reset_server_globals();
+        return FALSE;
+    }
+
+    // Optional harness-only evt guard (env-gated, independent of network fix)
+    BOOL guard_ok = create_evt_guard_hook();
+
+    if (!server_ok && !guard_ok)
+    {
+        logf("[HOOK] Nothing to hook, MinHook released");
         MH_Uninitialize();
         reset_server_globals();
         return FALSE;
