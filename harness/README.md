@@ -108,14 +108,17 @@ over `gilde-net` with `networkfix.asi` + evt guard active. Step screenshots in
 ## Session timing (measured)
 
 From `compose up`: game menu ~30s, host lobby ~45s, client connected ~50s,
-both Ready ~55s, in-game ~4:35. The ~170s between Ready and in-game is the
-game's own paced initial-state sync: the server streams the town snapshot at
-about two 145-byte packets per 30ms tick (~10KB/s, visible with
-`HARNESS_NET_TRACE=1`), then a burst of 24-byte object packets. This floor is
-invariant: GPU rendering, town choice, ready ordering and the network fix all
-leave it unchanged, and accelerating the winmm tick (timeSetEvent hook, 2x or
-4x) desyncs the start handshake so the session never launches. Treat ~5 min
-wall-clock per full E2E as the game's authentic cost.
+both Ready ~55s, town data ~22s, **in-game ~87s**.
+
+The town-data transfer used to take ~170s: server.dll's network pump thread
+is throttled by a hardcoded Sleep(30) and dequeues exactly one queued message
+per connection per tick (~2x145B per 30ms, ~10KB/s), while the whole snapshot
+sits pre-queued and TCP is idle (strace: the only wait between sends is the
+Sleep itself). networkfix.asi now patches server.dll's Sleep IAT entry and
+clamps that 30ms to 1ms (FASTSYNC). Scope is server.dll only, so game-exe
+timing is untouched; accelerating the global winmm tick instead desyncs the
+start handshake (tried, rejected). `NETWORKFIX_FASTSYNC=0` restores original
+pacing; baseline mode (`NETWORKFIX_DISABLE=1`) never patches.
 
 `HARNESS_NET_TRACE=1` hex-dumps server.dll send/recv payloads to hook_log for
 protocol debugging.
