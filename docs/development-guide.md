@@ -918,7 +918,7 @@ docker compose -f harness/docker-compose.yml build   # 42s winecfg + setup, 6.62
 
 The entrypoint `harness/entrypoint.sh` still supports `CLEAN_PREFIX=0/1` to optionally `rm -rf WINEPREFIX && wineboot --init && setup...` per container at `up` time (see `Troubleshooting` for stale `wpf1` symptoms).
 
-For the game harness run `docker compose -f harness/docker-compose.yml build` then `up --abort-on-container-exit` (`Xvfb :99 1024x768` in same pidns, `ffmpeg`, drivers `windowactivate → windowmove 0,0 → Down×3→Return`, `LUA_CONSOLE=1` → `luaapi.asi`; host accelerated `Xwayland :92 1024x768` via `harness/scripts/start-xwayland.sh` + `harness/docker-compose.xwayland.yml`). Videos in `harness/artifacts/{objective_1024_*,proof_xwayland_*}.mp4`. The `0x42980D` evt-headless quirk is in `harness/README.md`.
+For the game harness run `docker compose -f harness/docker-compose.yml build` then `up --abort-on-container-exit` (fully headless in-container weston + Xwayland `:99 1024x768`, `ffmpeg`, drivers `windowactivate → windowmove 0,0 → Down×3→Return`, `LUA_CONSOLE=1` → `luaapi.asi`; optional GPU via `harness/docker-compose.gpu.yml`, A/B baseline via `NETWORKFIX_DISABLE=1`). Videos in `harness/artifacts/` + `harness/logs/`. The headless crash chain and its fixes (i386 GL, RandR modes, ASI loading, evt guard) are in `harness/README.md`.
 
 ## Getting Help
 

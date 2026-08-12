@@ -114,9 +114,12 @@ The plugin uses [MinHook](https://github.com/TsudaKageyu/minhook), a minimalisti
 BOOL init_hooks(void)
 {
     if (g_HooksInitialized) return TRUE;
-    if (!init_server_module()) return FALSE;            // LoadLibrary + detect via pattern→SHA256
+    BOOL fix_enabled = !env_flag("NETWORKFIX_DISABLE");   // baseline mode for harness A/B runs
+    BOOL server_ok = fix_enabled && init_server_module(); // LoadLibrary + detect via pattern→SHA256
     if (MH_Initialize() != MH_OK) return FALSE;
-    if (!create_hooks()) return FALSE;                  // MH_CreateHook(server RVA) + MH_CreateHookApi(ws2_32/kernel32)
+    if (server_ok && !create_hooks()) return FALSE;       // MH_CreateHook(server RVA) + MH_CreateHookApi(ws2_32/kernel32)
+    BOOL guard_ok = create_evt_guard_hook();              // HARNESS_EVT_GUARD=1, signature-checked
+    if (!server_ok && !guard_ok) return FALSE;            // nothing to hook
     if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK) return FALSE;
     g_HooksInitialized = true;
     return TRUE;
@@ -493,7 +496,7 @@ This is a false positive - the code is open source and can be audited.
 
 ### Harness (xdotool + Lua)
 
-`harness/` is `gilde-net` + `Xvfb :99 1024x768` (same pidns, `ffmpeg`) + `drivers/{host,client,common}.sh` (`xdotool` + `lua_probe` stub + `check_frame.py`) + `lua/`/`luaapi.asi` opt-in (`harness/LUA_INTEGRATION.md`). `0x42980D` `6b7e94` evt race documented in `harness/README.md`.
+`harness/` is `gilde-net` + fully headless in-container weston + rootful Xwayland `:99 1024x768` (RandR modes the game's init requires; llvmpipe by default, GPU via `docker-compose.gpu.yml`) + `ffmpeg` + `drivers/{host,client,common}.sh` (`xdotool` + `lua_probe` stub + `check_frame.py`) + `lua/`/`luaapi.asi` opt-in (`harness/LUA_INTEGRATION.md`). ASI loading is done by dxwrapper `LoadPlugins=1` (`d3d8=n,b` override); headless crash chain (`0x42980D`/`0x46B2CC`) root-caused and fixed, see `harness/README.md`.
 
 ### Extension Points
 
