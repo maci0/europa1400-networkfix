@@ -130,6 +130,31 @@ they run `play_town` (character-move clicks that generate synced command
 traffic) while `desync_alive` watches for a dropped session (window title
 revert, process death, fatal log strings). `PLAY_ITERS` sets the length.
 
+### Endurance mode (`ENDURANCE=1`)
+
+Long-running soak test: after both peers reach the town view the drivers set
+max game speed (clicking the mantel clock steps it up, ~3x measured) and then
+run until something fails, dismissing year-end UI automatically.
+
+- Year-end detection is a brightness check on the status-bar strip: ~34k when
+  the parchment bar is visible, ~21k when a fullscreen scroll covers it
+  (threshold 28k). On a covered bar the loop clicks both Continue positions a
+  few times and re-maxes speed (the year start resets it).
+- Failure is declared on window/title loss, a fatal `game.log` line
+  (connection lost / terminating / desync / disconnect / synchron), or a modal
+  that will not clear after ~6 tries (likely an error dialog). Each failure
+  captures `endur_fail_*` screenshots and a `game.log` tail.
+- Cadence: at max clock speed the calendar advances ~1 game-year per real hour
+  (multiplayer forbids time-cheats — they desync — so clock speed is the
+  ceiling). Expect a multi-hour run; `entrypoint.sh` already writes a
+  screenshot every 5s so the frame history is captured for post-mortem.
+
+```bash
+ENDURANCE=1 docker compose -f harness/docker-compose.yml \
+  -f harness/docker-compose.lua.yml up -d
+# watch: grep '\[endur\]' harness/logs/*/driver.log
+```
+
 Fault-injection knobs in networkfix.asi (all env-gated, applied independently
 of the fix so the A/B stays fair):
 
