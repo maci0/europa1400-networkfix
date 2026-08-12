@@ -735,6 +735,84 @@ static BOOL env_flag(const char *name)
     return GetEnvironmentVariableA(name, value, sizeof(value)) == 1 && value[0] == '1';
 }
 
+/*
+ * Fast sync: server.dll's network pump thread is throttled by a hardcoded
+ * Sleep(30) and dequeues exactly ONE queued message per connection per tick
+ * (pump loop 0x95a1..0x95c6 in the GOG build, send-pump 0xa860). The whole
+ * town snapshot (~5300 x 145-byte messages) is queued up front, so a
+ * multiplayer game load takes ~160 s at ~10 KB/s while the TCP link and both
+ * consumers sit idle (verified by strace: the only wait between sends is the
+ * Sleep itself). Clamping that Sleep(30) to 1 ms makes the transfer complete
+ * in seconds without touching any other timing (the game exe's timers are
+ * unaffected: the patch is on server.dll's own IAT). Disable with
+ * NETWORKFIX_FASTSYNC=0.
+ */
+static VOID(WINAPI *real_server_sleep)(DWORD) = NULL;
+
+static VOID WINAPI hook_server_sleep(DWORD ms)
+{
+    if (ms == 30)
+    {
+        logf_rate_limited("fastsync", "[FASTSYNC] server.dll pump Sleep(30) clamped to 1 ms");
+        ms = 1; // keep yielding so the pump thread never busy-spins
+    }
+    real_server_sleep(ms);
+}
+
+static void patch_server_sleep_iat(void)
+{
+    {
+        char v[2] = {0};
+        if (GetEnvironmentVariableA("NETWORKFIX_FASTSYNC", v, sizeof(v)) == 1 && v[0] == '0')
+        {
+            logf("[FASTSYNC] Disabled via NETWORKFIX_FASTSYNC=0");
+            return;
+        }
+    }
+
+    const BYTE              *base = (const BYTE *)g_hServerDll;
+    const IMAGE_DOS_HEADER  *dos = (const IMAGE_DOS_HEADER *)base;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE)
+        return;
+    const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE)
+        return;
+    const IMAGE_DATA_DIRECTORY *dir = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (dir->VirtualAddress == 0 || dir->Size == 0)
+        return;
+
+    const IMAGE_IMPORT_DESCRIPTOR *imp = (const IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress);
+    for (; imp->Name != 0; imp++)
+    {
+        const char *dllName = (const char *)(base + imp->Name);
+        if (_stricmp(dllName, "KERNEL32.dll") != 0)
+            continue;
+        const IMAGE_THUNK_DATA *nameThunk = (const IMAGE_THUNK_DATA *)(base + imp->OriginalFirstThunk);
+        IMAGE_THUNK_DATA       *iatThunk = (IMAGE_THUNK_DATA *)(base + imp->FirstThunk);
+        for (; nameThunk->u1.AddressOfData != 0; nameThunk++, iatThunk++)
+        {
+            if (nameThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)
+                continue;
+            const IMAGE_IMPORT_BY_NAME *ibn = (const IMAGE_IMPORT_BY_NAME *)(base + nameThunk->u1.AddressOfData);
+            if (strcmp((const char *)ibn->Name, "Sleep") != 0)
+                continue;
+            DWORD oldProtect;
+            if (!VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function), PAGE_READWRITE, &oldProtect))
+            {
+                logf("[FASTSYNC] VirtualProtect failed: %lu", GetLastError());
+                return;
+            }
+            real_server_sleep = (VOID(WINAPI *)(DWORD))(uintptr_t)iatThunk->u1.Function;
+            iatThunk->u1.Function = (uintptr_t)hook_server_sleep;
+            VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function), oldProtect, &oldProtect);
+            logf("[FASTSYNC] Patched server.dll Sleep IAT slot %p (orig %p)", (void *)&iatThunk->u1.Function,
+                 (void *)real_server_sleep);
+            return;
+        }
+    }
+    logf("[FASTSYNC] server.dll KERNEL32 Sleep import not found — pump throttle left in place");
+}
+
 /* Best-effort: failure only means the harness guard is off, never fails init. */
 static BOOL create_evt_guard_hook(void)
 {
@@ -848,6 +926,12 @@ BOOL init_hooks(void)
         MH_Uninitialize();
         reset_server_globals();
         return FALSE;
+    }
+
+    // Fast sync: unthrottle server.dll's Sleep(30)-paced network pump
+    if (server_ok)
+    {
+        patch_server_sleep_iat();
     }
 
     // Optional harness-only evt guard (env-gated, independent of network fix)
