@@ -29,6 +29,7 @@ to_args() {
     reorder) echo "delay 20ms reorder 25% 50%" ;;
     duplicate) echo "duplicate 5%" ;;
     corrupt) echo "corrupt 0.5%" ;;
+    throttle) echo "TBF" ;;
     *) echo "unknown $1" >&2; exit 1;;
   esac
 }
@@ -53,6 +54,12 @@ for svc in "${services[@]}"; do
   if [[ -z "$SCENARIO" ]]; then echo "Need --scenario"; exit 1; fi
   ARGS=$(to_args "$SCENARIO")
   echo "Applying $SCENARIO ($ARGS) to $svc eth0"
-  sudo nsenter -n -t "$PID" tc qdisc replace dev eth0 root netem $ARGS
+  if [[ "$ARGS" == "TBF" ]]; then
+    # Token-bucket, no sch_netem. Default 32 kbit / 4 kb / 400 ms.
+    sudo nsenter -n -t "$PID" tc qdisc replace dev eth0 root tbf \
+      rate "${GC_TBF_RATE:-32kbit}" burst "${GC_TBF_BURST:-4kb}" latency "${GC_TBF_LAT:-400ms}"
+  else
+    sudo nsenter -n -t "$PID" tc qdisc replace dev eth0 root netem $ARGS
+  fi
   sudo nsenter -n -t "$PID" tc qdisc show dev eth0
 done

@@ -10,14 +10,14 @@ windows on your desktop, no GPU required.
 
 | Layer | Why |
 |-------|-----|
-| weston `--backend=headless` + rootful `Xwayland :99 -geometry 1024x768` | The game's init enumerates D3D adapters/modes; it needs the RandR mode list Xwayland provides. Plain Xvfb has no usable mode list → init fails → shutdown-path crash at `0x46B2CC`. |
+| weston `--backend=headless` + rootful `Xwayland :99 -geometry 1152x864` | Matches `game.ini cur_res=2`. The game's init enumerates D3D adapters/modes; it needs the RandR mode list Xwayland provides. Plain Xvfb has no usable mode list → init fails → shutdown-path crash at `0x46B2CC`. |
 | i386 GL libraries (`libgl1:i386`, `libgl1-mesa-dri:i386`, …) | Wine here is 32-bit; without them wined3d finds no GL at all (`Failed to find a suitable pixel format`). 64-bit `glxinfo` working proves nothing. |
 | `WINEDLLOVERRIDES="…;d3d8=n,b"` (set by `entrypoint.sh`) | Loads the native dxwrapper `d3d8.dll`. Without the override Wine silently uses builtin d3d8 and dxwrapper is inert. |
 | dxwrapper `D3d8to9=1` + `SetPOW2Caps=1` | POW2 caps fix for the D3D8 surface-sizing UI bug. |
 | dxwrapper `[Plugins] LoadPlugins=1` | Actually loads `*.asi` from `C:\Guild`. Miles (mss32) only scans ASI providers when audio init succeeds, which it does not headless: without this the harness never loaded `networkfix.asi` at all. Verify via `logs/*/hook_log.txt`. |
 | `game.ini` `ServerPath=Server\server.dll` (relative, set by `entrypoint.sh`) | networkfix rejects absolute server paths; the installer writes an absolute one. |
 | `HARNESS_EVT_GUARD=1` | Env-gated NULL guard in networkfix.asi for the game's evt poll (`0x429800`): skips the tick while the `evt:` tables (`[0x6B7E94]`) are unallocated/freed. Belt-and-braces against the headless init race (`0x42980D`). |
-| `NETWORKFIX_DISABLE=1` | Baseline mode for A/B runs: same ASI, network-fix hooks off, evt guard still available. |
+| `NETWORKFIX_DISABLE=1` | Baseline mode for A/B runs: same ASI, hooks stay installed but pass through with original game semantics. Evt guard and (unless `NETWORKFIX_FASTSYNC=0`) the Sleep IAT patch still apply. |
 
 ## Build
 
@@ -118,7 +118,8 @@ Sleep itself). networkfix.asi now patches server.dll's Sleep IAT entry and
 clamps that 30ms to 1ms (FASTSYNC). Scope is server.dll only, so game-exe
 timing is untouched; accelerating the global winmm tick instead desyncs the
 start handshake (tried, rejected). `NETWORKFIX_FASTSYNC=0` restores original
-pacing; baseline mode (`NETWORKFIX_DISABLE=1`) never patches.
+pacing. Fastsync is independent of `NETWORKFIX_DISABLE`: the IAT patch still
+applies in baseline mode unless you also set `NETWORKFIX_FASTSYNC=0`.
 
 `HARNESS_NET_TRACE=1` hex-dumps server.dll send/recv payloads to hook_log for
 protocol debugging.
@@ -154,6 +155,37 @@ ENDURANCE=1 docker compose -f harness/docker-compose.yml \
   -f harness/docker-compose.lua.yml up -d
 # watch: grep '\[endur\]' harness/logs/*/driver.log
 ```
+
+### A/B runner (`harness/scripts/ab.sh`)
+
+Same lua lobby + `PLAY_ITERS=12` gameplay, twice: fix ON (`NETWORKFIX_DISABLE=0`)
+then baseline (`NETWORKFIX_DISABLE=1`). Stress overlay is
+`harness/docker-compose.ab.yml`: client cgroup `cpus=0.15`,
+`HARNESS_TINY_BUFFERS=4096`, plus a host-nsenter `tbf` attempt
+(`harness/netem.sh --scenario throttle`).
+
+```bash
+harness/scripts/ab.sh both     # or: on | off
+# logs: harness/logs/ab-on/{host,client}/ and harness/logs/ab-off/...
+```
+
+This kernel (`7.1.4-1-cachyos`) has **no qdisc modules** (`sch_netem` /
+`sch_tbf` missing). In-container `tc` also fails under rootless/userns.
+`ab.sh` therefore SIGSTOPs the client **game + wineserver** the moment the
+host logs a `server.dll` send `len>28` (the 128 B payload after the 28 B
+lobby handshake), then SIGCONTs after `AB_FREEZE_S` (default 25). Confirmed
+2026-08-14 (`T` on both pids, then `S`/`R`):
+
+| Arm | Freeze | Host `send` | Session |
+|-----|--------|-------------|---------|
+| `ab-on` | yes, on 128 B send | 28 B then 128 B; 55 idle `recv` WOULDBLOCK; **no send retry / Max retries** | both peers `gameplay completed, session healthy` |
+| `ab-off` | yes, on 128 B send | same 28 B + 128 B (pass-through, no WOULDBLOCK log) | both peers `gameplay completed, session healthy` |
+
+A 25 s wineserver freeze on a 128 B datagram does **not** fill the 4 KB
+send buffer or produce a silent partial send — TCP just holds the one
+segment until CONT. A fail-the-baseline contrast still needs a real
+bottleneck (`sch_netem`/`sch_tbf`, see `artifacts/NETEM_NOTE.md`) or a
+much longer freeze overlapping a large town-snapshot burst.
 
 Fault-injection knobs in networkfix.asi (all env-gated, applied independently
 of the fix so the A/B stays fair):

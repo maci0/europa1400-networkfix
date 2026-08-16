@@ -69,10 +69,10 @@ clean:
 	rm -f bin/*.asi bin/*.exe bin/*.pdb bin/*.lib 2>/dev/null; rm -f bin/verify*/*.asi 2>/dev/null || true
 
 format:
-	clang-format -i src/*.c src/*.h
+	clang-format -i src/*.c src/*.h test/*.c
 
 lint: format
-	git diff --exit-code src/
+	git diff --exit-code src/ test/
 
 install: $(TARGET)
 	cp $(TARGET) ~/.wine/drive_c/Guild

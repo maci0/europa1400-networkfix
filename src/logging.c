@@ -14,7 +14,7 @@
 
 #include "logging.h"
 
-logging_context g_logctx = {0};
+logging_context g_logctx = {.log_file = INVALID_HANDLE_VALUE};
 
 // Logging constants
 static const uint32_t MAX_LOG_LINES = 50000u;     /* Max lines before rollover */
@@ -171,24 +171,30 @@ bool init_logging(HMODULE hModule)
 {
     InitializeCriticalSection(&g_logctx.critical_section);
     g_logctx.critical_section_initialized = true;
+    g_logctx.log_file = INVALID_HANDLE_VALUE;
 
     if (hModule == NULL)
     {
+        close_logging();
         return false;
     }
 
     wchar_t dllPath[MAX_PATH];
-    if (GetModuleFileNameW(hModule, dllPath, MAX_PATH) == 0)
+    DWORD   n = GetModuleFileNameW(hModule, dllPath, MAX_PATH);
+    // n >= MAX_PATH means the path was truncated (and may be unterminated).
+    if (n == 0 || n >= MAX_PATH)
     {
+        close_logging();
         return false;
     }
-    // Check PathRemoveFileSpecW return value
     if (!PathRemoveFileSpecW(dllPath))
     {
+        close_logging();
         return false;
     }
     if (wcscat_s(dllPath, MAX_PATH, L"\\hook_log.txt") != 0)
     {
+        close_logging();
         return false;
     }
 
@@ -197,6 +203,7 @@ bool init_logging(HMODULE hModule)
 
     if (g_logctx.log_file == INVALID_HANDLE_VALUE)
     {
+        close_logging();
         return false;
     }
 

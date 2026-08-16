@@ -23,11 +23,12 @@ real‑world connections.
 
 ## How It Works
 
-The `.asi` plugin is loaded automatically by the game and uses [MinHook](https://github.com/TsudaKageyu/minhook) to intercept key functions at runtime:
+On a real Windows install the Gold Edition ASI loader picks up `networkfix.asi` from the game directory. Under Wine (including `harness/`) that loader never fires — the ASI is loaded by dxwrapper (`[Plugins] LoadPlugins=1` + `WINEDLLOVERRIDES=…;d3d8=n,b`). The plugin uses [MinHook](https://github.com/TsudaKageyu/minhook) to intercept key functions at runtime:
 
-1. **Windows Socket API hooks** (`recv`/`send`) - Converts `WSAEWOULDBLOCK` errors into graceful retries instead of fatal errors
-2. **Timing function hooks** (`GetTickCount`) - Ensures consistent timer behavior across network delays
-3. **Game-specific hooks** (`server.dll` packet validation) - Resets persistent error states that cause "Out of Sync" errors
+1. **Windows Socket API hooks** (`recv`/`send`) — converts `WSAEWOULDBLOCK` into a 0-byte `recv` and retries a partial `send` instead of treating either as fatal
+2. **`TCP_NODELAY`** — disables Nagle on `server.dll` sockets (latency-sensitive small messages; off with `NETWORKFIX_NODELAY=0`)
+3. **Game-specific hook** (`srv_gameStreamReader`) — resets the persistent `ctx[0xE]` error flag that causes "Out of Sync"
+4. **Fast sync** — clamps `server.dll`'s pump `Sleep(30)` to 1 ms via its KERNEL32 IAT (off with `NETWORKFIX_FASTSYNC=0`)
 
 By applying surgical fixes only to problematic functions, the plugin adds proper error handling and retry logic without changing game behavior.
 
@@ -106,7 +107,7 @@ The compiled plugins will be in:
 3. **Verify installation**
    - Launch the game
    - Check for `hook_log.txt` in the game directory
-   - Look for `[HOOK] Hook initialization complete` in the log
+   - Look for `[HOOK] All hooks enabled successfully` (and `[HOOK] Initialization completed successfully`)
 
 4. **Test multiplayer**
    - Start or join a multiplayer game
@@ -179,7 +180,7 @@ If issues persist, please create an issue on the [GitHub repository](https://git
 
 ### Automated tests
 
-Run the full suite (37+ tests) under Wine:
+Run the full suite (40+ tests) under Wine:
 
 ```bash
 make test
@@ -202,7 +203,7 @@ file and skips cleanly when none are present. See
 
 ## Harness (game test — xdotool + Lua)
 
-`harness/` runs `Europa1400Gold_TL.exe` fully headless: in-container `weston --backend=headless` + rootful `Xwayland :99 1024x768` (llvmpipe default, GPU via `harness/docker-compose.gpu.yml`), fresh `WINEARCH=win32` prefix (`setup_the_guild_gold_2.0.0.5.exe /VERYSILENT`), `gilde-net 10.10.0.0/24` isolated, ASI loaded via dxwrapper `LoadPlugins=1` (`d3d8=n,b`), A/B baseline via `NETWORKFIX_DISABLE=1`, `ffmpeg` + `import` screenshots, `tc netem loss 10%` (`GC_LOSS` or `harness/netem.sh --scenario packet-loss`), xdotool drivers + optional `luaapi.asi` sister (`LUA_CONSOLE=1`) via `harness/LUA_INTEGRATION.md` and `harness/drivers/common.sh` helpers (`lua_probe/shot/check_frame.py`). See `harness/README.md` + `docs/development-guide.md` + `handoff.md`.
+`harness/` runs `Europa1400Gold_TL.exe` fully headless: in-container `weston --backend=headless` + rootful `Xwayland :99 -geometry 1152x864` (`cur_res=2`; llvmpipe default, GPU via `harness/docker-compose.gpu.yml`), fresh `WINEARCH=win32` prefix (`setup_the_guild_gold_2.0.0.5.exe /VERYSILENT`), `gilde-net 10.10.0.0/24` isolated, ASI loaded via dxwrapper `LoadPlugins=1` (`d3d8=n,b`), A/B baseline via `NETWORKFIX_DISABLE=1` (hooks stay installed, fix behaviour off), `ffmpeg` + `import` screenshots, `tc netem` (`GC_LOSS` or `harness/netem.sh --scenario packet-loss`), and lua-driven lobby/gameplay (`docker-compose.lua.yml`) via `harness/LUA_INTEGRATION.md`. See `harness/README.md` + `docs/configuration.md` + `handoff.md`.
 
 ## Documentation
 

@@ -14,6 +14,8 @@ void cleanup_hooks(void);
 BOOL is_caller_from_server(uintptr_t caller_addr);
 #ifdef NETWORKFIX_TEST
 extern BOOL g_test_force_caller_server;
+BOOL        is_safe_server_path(const char *path);
+BOOL        path_is_within_dir(const char *path, const char *dir);
 #endif
 
 // Hook implementations

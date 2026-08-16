@@ -1,0 +1,32 @@
+# A/B stress overlay. sch_netem is unavailable on some host kernels
+# (see artifacts/NETEM_NOTE.md); this uses cgroup CPU + a tbf qdisc
+# (no netem) plus tiny send buffers so the sender actually hits
+# WSAEWOULDBLOCK. Usage:
+#   NETWORKFIX_DISABLE=0 docker compose -f docker-compose.yml \
+#     -f docker-compose.lua.yml -f docker-compose.ab.yml up --abort-on-container-exit
+#   NETWORKFIX_DISABLE=1 docker compose -f docker-compose.yml \
+#     -f docker-compose.lua.yml -f docker-compose.ab.yml up --abort-on-container-exit
+services:
+  gilde-host:
+    environment:
+      - HARNESS_TINY_BUFFERS=${HARNESS_TINY_BUFFERS:-4096}
+      - HARNESS_NET_TRACE=${HARNESS_NET_TRACE:-1}
+      - PLAY_ITERS=${PLAY_ITERS:-12}
+      - GC_TBF_RATE=${GC_TBF_RATE:-32kbit}
+      - GC_TBF_BURST=${GC_TBF_BURST:-4kb}
+      - GC_TBF_LAT=${GC_TBF_LAT:-400ms}
+    volumes:
+      - ./entrypoint.sh:/home/gilde/entrypoint.sh:ro
+    cpus: ${AB_HOST_CPUS:-1.0}
+  gilde-client:
+    environment:
+      - HARNESS_TINY_BUFFERS=${HARNESS_TINY_BUFFERS:-4096}
+      - HARNESS_NET_TRACE=${HARNESS_NET_TRACE:-1}
+      - PLAY_ITERS=${PLAY_ITERS:-12}
+      - GC_TBF_RATE=${GC_TBF_RATE:-32kbit}
+      - GC_TBF_BURST=${GC_TBF_BURST:-4kb}
+      - GC_TBF_LAT=${GC_TBF_LAT:-400ms}
+    volumes:
+      - ./entrypoint.sh:/home/gilde/entrypoint.sh:ro
+    # Starve the client's drain so the host send buffer fills.
+    cpus: ${AB_CLIENT_CPUS:-0.15}

@@ -48,7 +48,7 @@ The europa1400-networkfix is a runtime API hook plugin that intercepts Windows n
 
 ### ASI Plugin Loader
 
-Europa 1400 Gold Edition includes an ASI plugin loader that automatically loads `.asi` files from the game directory at startup. This is the same mechanism used by many modding frameworks.
+On a native Windows Gold Edition install the game's ASI loader picks up `.asi` files from the game directory at startup. Under Wine (and in `harness/`) that loader never fires — Miles only scans ASI providers when audio init succeeds, which it does not headless. The harness therefore loads `networkfix.asi` via dxwrapper (`[Plugins] LoadPlugins=1` + `WINEDLLOVERRIDES=…;d3d8=n,b`).
 
 ### Load Sequence
 
@@ -82,9 +82,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
         break;
 
     case DLL_PROCESS_DETACH:
-        // Cleanup on exit
-        cleanup_hooks();
-        close_logging();
+        // Join the init thread and tear down only on a real FreeLibrary
+        // (lpReserved == NULL). Process-exit detach skips waits/frees.
+        if (lpReserved == NULL)
+        {
+            cleanup_hooks();
+            close_logging();
+        }
         break;
     }
     return TRUE;
@@ -114,12 +118,13 @@ The plugin uses [MinHook](https://github.com/TsudaKageyu/minhook), a minimalisti
 BOOL init_hooks(void)
 {
     if (g_HooksInitialized) return TRUE;
-    BOOL fix_enabled = !env_flag("NETWORKFIX_DISABLE");   // baseline mode for harness A/B runs
-    BOOL server_ok = fix_enabled && init_server_module(); // LoadLibrary + detect via pattern→SHA256
+    g_fix_active = !env_flag("NETWORKFIX_DISABLE"); // hooks stay installed; behaviour gated inside
+    BOOL server_ok = init_server_module();          // always: caller-gating + fastsync need the base
     if (MH_Initialize() != MH_OK) return FALSE;
-    if (server_ok && !create_hooks()) return FALSE;       // MH_CreateHook(server RVA) + MH_CreateHookApi(ws2_32/kernel32)
-    BOOL guard_ok = create_evt_guard_hook();              // HARNESS_EVT_GUARD=1, signature-checked
-    if (!server_ok && !guard_ok) return FALSE;            // nothing to hook
+    if (server_ok && !create_hooks()) return FALSE; // MH_CreateHook(server RVA) + MH_CreateHookApi
+    if (server_ok) patch_server_sleep_iat();        // NETWORKFIX_FASTSYNC=0 skips the IAT write
+    BOOL guard_ok = create_evt_guard_hook();        // HARNESS_EVT_GUARD=1, signature-checked
+    if (!server_ok && !guard_ok) return FALSE;
     if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK) return FALSE;
     g_HooksInitialized = true;
     return TRUE;
@@ -171,9 +176,11 @@ Game Code → recv() → [MinHook Trampoline] → hook_recv()
 - `init_hooks()` - Initialize all hooks
 - `hook_recv()` - Winsock receive hook
 - `hook_send()` - Winsock send hook
-- `hook_GetTickCount()` - Timing function hook
+- `hook_GetTickCount()` - Timing function hook (passthrough + NULL fallback)
 - `hook_srv_gameStreamReader()` - Server.dll packet validation hook
 - `is_caller_from_server()` - Detects if caller is from server.dll
+- `patch_server_sleep_iat()` / `restore_server_sleep_iat()` - Fastsync Sleep(30)→1 ms
+- `maybe_set_nodelay()` - TCP_NODELAY on server.dll sockets
 
 ### 3. Logging Module ([src/logging.c](../src/logging.c), [src/logging.h](../src/logging.h))
 
@@ -194,9 +201,10 @@ Game Code → recv() → [MinHook Trampoline] → hook_recv()
 - Instruction pattern matching for function signatures
 
 **Key Functions:**
-- `find_pattern_in_module()` - Search DLL for byte patterns
+- `find_srv_gameStreamReader_by_pattern()` — scan `server.dll` for the common prologue
+- `find_pattern_in_memory()` / `validate_function_prologue()` — mask search + JE/JNE bounds check (test-only exports)
 
-### 5. Version Detection ([src/versions.h](../src/versions.h), [src/sha256.c](../src/sha256.c))
+### 5. Version Detection ([src/versions.c](../src/versions.c), [src/sha256.c](../src/sha256.c))
 
 **Responsibilities:**
 - Detect server.dll version by SHA256 hash
@@ -252,7 +260,7 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
     int total_sent = 0;
     int retry_count = 0;
 
-    while (total_sent < len && retry_count < MAX_SEND_RETRIES)
+    while (total_sent < len && retry_count < SEND_MAX_RETRIES)
     {
         int result = real_send(s, buf + total_sent, len - total_sent, flags);
 
@@ -277,7 +285,7 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 ```
 
 **Configuration:**
-- `MAX_SEND_RETRIES` - Maximum retry attempts (default: `5000` ≈5 s, was `INT_MAX`)
+- `SEND_MAX_RETRIES` - Maximum retry attempts (default: `5000` ≈5 s)
 - `SEND_RETRY_DELAY_MS` - Delay between retries (default: 1 ms)
 
 **Impact:** Handles network buffer congestion gracefully with automatic retries.
@@ -496,7 +504,7 @@ This is a false positive - the code is open source and can be audited.
 
 ### Harness (xdotool + Lua)
 
-`harness/` is `gilde-net` + fully headless in-container weston + rootful Xwayland `:99 1024x768` (RandR modes the game's init requires; llvmpipe by default, GPU via `docker-compose.gpu.yml`) + `ffmpeg` + `drivers/{host,client,common}.sh` (`xdotool` + `lua_probe` stub + `check_frame.py`) + `lua/`/`luaapi.asi` opt-in (`harness/LUA_INTEGRATION.md`). ASI loading is done by dxwrapper `LoadPlugins=1` (`d3d8=n,b` override); headless crash chain (`0x42980D`/`0x46B2CC`) root-caused and fixed, see `harness/README.md`.
+`harness/` is `gilde-net` + fully headless in-container weston + rootful Xwayland `:99 1152x864` (`cur_res=2`; RandR modes the game's init requires; llvmpipe by default, GPU via `docker-compose.gpu.yml`) + `ffmpeg` + lua-driven `drivers/{host,client,common}.sh` (`lua_do` in-process clicks; XTest does not reach submenu buttons) + `lua/`/`luaapi.asi` via `docker-compose.lua.yml` (`harness/LUA_INTEGRATION.md`). ASI loading is done by dxwrapper `LoadPlugins=1` (`d3d8=n,b` override); headless crash chain (`0x42980D`/`0x46B2CC`) root-caused and fixed, see `harness/README.md`.
 
 ### Extension Points
 

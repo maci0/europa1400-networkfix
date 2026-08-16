@@ -157,10 +157,12 @@ europa1400-networkfix/
 │   ├── logging.c/h             # Logging system
 │   ├── pattern_matcher.c/h    # Binary pattern search
 │   ├── sha256.c/h              # SHA256 hashing for version detection
-│   └── versions.h              # Known server.dll versions
+│   ├── versions.c              # known_versions[] table (Steam / GOG hashes + RVAs)
+│   └── versions.h              # server_version_info_t + extern known_versions[]
 ├── docs/                       # Documentation
 │   ├── architecture.md         # Technical architecture
 │   ├── problem-analysis.md     # Problem analysis
+│   ├── configuration.md        # Runtime + build-time options
 │   ├── server-dll-versions.md  # Version documentation
 │   └── development-guide.md    # This file
 ├── vendor/                     # Third-party dependencies
@@ -179,7 +181,7 @@ europa1400-networkfix/
 - [src/hooks.h](../src/hooks.h) - Hook interface definitions
 - [src/logging.c](../src/logging.c) - Thread-safe file logging
 - [src/pattern_matcher.c](../src/pattern_matcher.c) - Function pattern search
-- [src/versions.h](../src/versions.h) - Known server.dll SHA256 hashes
+- [src/versions.c](../src/versions.c) - Known server.dll SHA256 hashes + RVAs
 - [Makefile](../Makefile) - Build system
 
 ## Code Style Guidelines
@@ -228,7 +230,7 @@ DWORD error_code = GetLastError();
 **Constants:**
 ```c
 // Preprocessor defines (UPPER_CASE)
-#define MAX_SEND_RETRIES 100
+#define SEND_MAX_RETRIES 100
 #define SEND_RETRY_DELAY_MS 1
 
 // Const variables (snake_case)
@@ -477,7 +479,8 @@ make test
 ```
 
 This builds `bin/test_hooks.exe` with `-DNETWORKFIX_TEST=1` and runs it under
-`wine`. Override `WINE=...` if your Wine binary lives elsewhere.
+`wine` (40+ cases, plus optional `server*.dll` fixtures). Override `WINE=...`
+if your Wine binary lives elsewhere.
 
 **What it covers:**
 
@@ -697,27 +700,17 @@ Get-FileHash server.dll -Algorithm SHA256
 - Look for function with error state checking pattern
 - Note the RVA (Relative Virtual Address)
 
-**4. Add to versions.h:**
+**4. Add to `known_versions[]` in [src/versions.c](../src/versions.c):**
 ```c
-// In src/versions.h
-#define NEWVERSION_HASH \
-    {0xaa, 0xbb, 0xcc, ...}  // SHA256 bytes
-
-#define NEWVERSION_RVA 0x1234  // Function offset
+{"<64-char lowercase sha256>", 0x1234, "My Edition"},
 ```
 
-**5. Update version detection:**
-```c
-// In src/hooks.c - detect_server_version()
-static const uint8_t newversion_hash[] = NEWVERSION_HASH;
-if (memcmp(hash, newversion_hash, 32) == 0)
-{
-    logf("[HOOK] Detected NewVersion server.dll");
-    return NEWVERSION_RVA;
-}
-```
+Pattern matching is tried first and already covers unknown builds whose
+prologue matches. The SHA256 table is only the fallback when the pattern
+misses. Rebuild and drop the new `server*.dll` next to `bin/test_hooks.exe`
+to exercise the fixture suite.
 
-**6. Document in server-dll-versions.md:**
+**5. Document in server-dll-versions.md:**
 - Add version details
 - Include SHA256 hash
 - Document RVA offset
@@ -735,10 +728,9 @@ uint8_t pattern[] = {
     // ... more bytes
 };
 
-void *func = find_pattern_in_module(hServer, pattern, sizeof(pattern));
-if (func)
+DWORD rva = 0;
+if (find_srv_gameStreamReader_by_pattern(hServer, &rva) == PATTERN_MATCH_SUCCESS)
 {
-    DWORD rva = (DWORD)((uintptr_t)func - (uintptr_t)hServer);
     logf("[HOOK] Found function via pattern at RVA 0x%X", rva);
     return rva;
 }
@@ -787,7 +779,7 @@ Tested with GOG version 1.0.0.0, multiplayer stable over 5 in-game years.
 ```
 fix: memory leak in pattern matcher
 
-Free allocated buffer in find_pattern_in_module() after search completes.
+Free allocated buffer after the pattern search completes.
 Leak occurred on every version detection attempt.
 
 Fixes #123
@@ -918,7 +910,7 @@ docker compose -f harness/docker-compose.yml build   # 42s winecfg + setup, 6.62
 
 The entrypoint `harness/entrypoint.sh` still supports `CLEAN_PREFIX=0/1` to optionally `rm -rf WINEPREFIX && wineboot --init && setup...` per container at `up` time (see `Troubleshooting` for stale `wpf1` symptoms).
 
-For the game harness run `docker compose -f harness/docker-compose.yml build` then `up --abort-on-container-exit` (fully headless in-container weston + Xwayland `:99 1024x768`, `ffmpeg`, drivers `windowactivate → windowmove 0,0 → Down×3→Return`, `LUA_CONSOLE=1` → `luaapi.asi`; optional GPU via `harness/docker-compose.gpu.yml`, A/B baseline via `NETWORKFIX_DISABLE=1`). Videos in `harness/artifacts/` + `harness/logs/`. The headless crash chain and its fixes (i386 GL, RandR modes, ASI loading, evt guard) are in `harness/README.md`.
+For the game harness run `docker compose -f harness/docker-compose.yml build` then `up --abort-on-container-exit` (fully headless in-container weston + Xwayland `:99 1152x864`, `ffmpeg`, lua-driven lobby via `docker-compose.lua.yml`; optional GPU via `harness/docker-compose.gpu.yml`, A/B baseline via `NETWORKFIX_DISABLE=1`). Videos in `harness/artifacts/` + `harness/logs/`. The headless crash chain and its fixes (i386 GL, RandR modes, ASI loading, evt guard) are in `harness/README.md`.
 
 ## Getting Help
 
