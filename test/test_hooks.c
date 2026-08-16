@@ -11,12 +11,12 @@
 #include "hooks.h"
 #include "pattern_matcher.h"
 #include "versions.h"
+#include <psapi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
 #include <winsock2.h>
-#include <psapi.h>
 
 /* hooks.c globals exposed under NETWORKFIX_TEST */
 extern int(WSAAPI *real_recv)(SOCKET, char *, int, int);
@@ -49,16 +49,16 @@ void       test_sleep(DWORD ms)
 /* ---- Scriptable recv mock ---- */
 typedef struct
 {
-    int        block_count;     /* number of WSAEWOULDBLOCK errors before success */
-    int        return_value;    /* value to return on the success call */
-    int        final_error;     /* non-zero -> on success call return SOCKET_ERROR + this WSA error */
-    const char *payload;        /* data to copy into recv buffer on success (NULL = none) */
-    int        call_count;
+    int         block_count;  /* number of WSAEWOULDBLOCK errors before success */
+    int         return_value; /* value to return on the success call */
+    int         final_error;  /* non-zero -> on success call return SOCKET_ERROR + this WSA error */
+    const char *payload;      /* data to copy into recv buffer on success (NULL = none) */
+    int         call_count;
 } recv_script;
 
 static recv_script g_recv_script;
 
-static int WSAAPI mock_recv(SOCKET s, char *buf, int len, int flags)
+static int WSAAPI  mock_recv(SOCKET s, char *buf, int len, int flags)
 {
     (void)s;
     (void)flags;
@@ -91,19 +91,19 @@ static int WSAAPI mock_recv(SOCKET s, char *buf, int len, int flags)
 /* ---- Scriptable send mock ---- */
 typedef struct
 {
-    int  chunk_size;    /* bytes to accept per successful send call (<=0 -> all remaining) */
-    int  block_count;   /* WSAEWOULDBLOCK errors before each successful chunk */
-    int  abort_after;   /* bytes after which to inject abort_error (-1 disabled) */
-    int  abort_error;   /* WSA error to inject (e.g. WSAECONNRESET) */
-    int  zero_at;       /* total bytes after which to return 0 ("connection closed") (-1 disabled) */
-    int  call_count;
-    int  total_accepted;
-    int  block_streak;  /* internal: blocks emitted in current streak */
+    int chunk_size;  /* bytes to accept per successful send call (<=0 -> all remaining) */
+    int block_count; /* WSAEWOULDBLOCK errors before each successful chunk */
+    int abort_after; /* bytes after which to inject abort_error (-1 disabled) */
+    int abort_error; /* WSA error to inject (e.g. WSAECONNRESET) */
+    int zero_at;     /* total bytes after which to return 0 ("connection closed") (-1 disabled) */
+    int call_count;
+    int total_accepted;
+    int block_streak; /* internal: blocks emitted in current streak */
 } send_script;
 
 static send_script g_send_script;
 
-static int WSAAPI mock_send(SOCKET s, const char *buf, int len, int flags)
+static int WSAAPI  mock_send(SOCKET s, const char *buf, int len, int flags)
 {
     (void)s;
     (void)buf;
@@ -298,7 +298,7 @@ static void test_send_non_server_passthrough(void)
     g_send_script.block_count = 3;
     g_send_script.chunk_size = 10;
     const char *msg = "abcdefghij";
-    int r = hook_send((SOCKET)1, msg, 10, 0);
+    int         r = hook_send((SOCKET)1, msg, 10, 0);
     CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR on non-server passthrough, got %d", r);
     CHECK(WSAGetLastError() == WSAEWOULDBLOCK, "expected WSAEWOULDBLOCK preserved, got %d", WSAGetLastError());
     CHECK(g_sleep_calls == 0, "expected 0 sleeps on passthrough, got %d", g_sleep_calls);
@@ -311,16 +311,16 @@ static void test_recv_non_server_passthrough(void)
     g_test_force_caller_server = FALSE;
     g_recv_script.block_count = 1;
     char buf[64];
-    int r = hook_recv((SOCKET)1, buf, sizeof(buf), 0);
+    int  r = hook_recv((SOCKET)1, buf, sizeof(buf), 0);
     CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR passthrough, got %d", r);
     CHECK(WSAGetLastError() == WSAEWOULDBLOCK, "expected WSAEWOULDBLOCK preserved, got %d", WSAGetLastError());
     g_test_force_caller_server = TRUE;
 }
 
 /* ---- srv_gameStreamReader mock + tests ---- */
-static int g_srv_call_count;
-static int g_srv_return;
-static int g_srv_set_ctx_e; /* if non-zero, mock writes this into ctx[0xE] */
+static int         g_srv_call_count;
+static int         g_srv_return;
+static int         g_srv_set_ctx_e; /* if non-zero, mock writes this into ctx[0xE] */
 
 static int __cdecl mock_srv(int *ctx, int received, int totalLen)
 {
@@ -394,7 +394,7 @@ static void test_pattern_finds_exact_match(void)
     const unsigned char needle[] = {0x51, 0x8B, 0x4C, 0x24};
     const unsigned char mask[] = {0xFF, 0xFF, 0xFF, 0xFF};
 
-    long off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
+    long                off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
     CHECK(off == 2, "expected offset 2, got %ld", off);
 }
 
@@ -404,7 +404,7 @@ static void test_pattern_returns_minus_one_when_absent(void)
     const unsigned char needle[] = {0x51, 0x8B};
     const unsigned char mask[] = {0xFF, 0xFF};
 
-    long off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
+    long                off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
     CHECK(off == -1, "expected -1, got %ld", off);
 }
 
@@ -415,7 +415,7 @@ static void test_pattern_mask_ignores_wildcards(void)
     const unsigned char needle[] = {0x51, 0x00, 0x4C, 0x24}; /* needle[1] is wildcard */
     const unsigned char mask[] = {0xFF, 0x00, 0xFF, 0xFF};
 
-    long off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
+    long                off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
     CHECK(off == 1, "expected offset 1 with wildcard, got %ld", off);
 }
 
@@ -425,7 +425,7 @@ static void test_pattern_rejects_when_haystack_too_small(void)
     const unsigned char needle[] = {0x51, 0x8B};
     const unsigned char mask[] = {0xFF, 0xFF};
 
-    long off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
+    long                off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
     CHECK(off == -1, "expected -1 on undersized haystack, got %ld", off);
 }
 
@@ -507,7 +507,7 @@ static void test_validate_rejects_when_too_close_to_end(void)
 static BOOL make_temp_path(wchar_t *out, size_t out_chars)
 {
     wchar_t tmpDir[MAX_PATH];
-    DWORD len = GetTempPathW(MAX_PATH, tmpDir);
+    DWORD   len = GetTempPathW(MAX_PATH, tmpDir);
     if (len == 0 || len >= MAX_PATH)
         return FALSE;
     wchar_t tmpFile[MAX_PATH];
@@ -528,7 +528,7 @@ static BOOL write_temp_file(const wchar_t *path, const void *data, DWORD size)
     if (h == INVALID_HANDLE_VALUE)
         return FALSE;
     DWORD written = 0;
-    BOOL ok = TRUE;
+    BOOL  ok = TRUE;
     if (size > 0)
         ok = WriteFile(h, data, size, &written, NULL) && written == size;
     CloseHandle(h);
@@ -710,6 +710,44 @@ static void test_ini_null_module_returns_null(void)
     CHECK(p == NULL, "expected NULL on NULL hModule, got: %s", p ? p : "(null)");
 }
 
+static void test_ini_prefers_serverpath_key(void)
+{
+    char ini_path[MAX_PATH];
+    CHECK(write_ini_next_to_exe("[Network]\r\nServer=legacy\\server.dll\r\nServerPath=Server\\server.dll\r\n", ini_path,
+                                sizeof(ini_path)) == TRUE,
+          "could not write game.ini");
+
+    const char *p = get_server_path_from_ini(GetModuleHandleA(NULL));
+    CHECK(p != NULL, "expected non-NULL");
+    if (p)
+    {
+        CHECK(strcmp(p, "Server\\server.dll") == 0, "expected ServerPath to win, got: %s", p);
+    }
+
+    DeleteFileA(ini_path);
+}
+
+static void test_is_safe_server_path_rejects_absolute_and_traversal(void)
+{
+    CHECK(is_safe_server_path("Server\\server.dll") == TRUE, "relative .dll should be accepted");
+    CHECK(is_safe_server_path("C:\\Guild\\server.dll") == FALSE, "drive-letter path should be rejected");
+    CHECK(is_safe_server_path("\\\\unc\\share\\server.dll") == FALSE, "UNC path should be rejected");
+    CHECK(is_safe_server_path("Server\\..\\server.dll") == FALSE, "traversal should be rejected");
+    CHECK(is_safe_server_path("Server\\server.exe") == FALSE, "non-dll should be rejected");
+    CHECK(is_safe_server_path("") == FALSE, "empty path should be rejected");
+    CHECK(is_safe_server_path(NULL) == FALSE, "NULL path should be rejected");
+}
+
+static void test_path_is_within_dir_requires_separator(void)
+{
+    CHECK(path_is_within_dir("C:\\Guild\\Server\\server.dll", "C:\\Guild") == TRUE, "descendant should match");
+    CHECK(path_is_within_dir("C:\\Guild", "C:\\Guild") == TRUE, "exact dir should match");
+    CHECK(path_is_within_dir("C:\\GuildExtra\\server.dll", "C:\\Guild") == FALSE, "prefix sibling must not match");
+    CHECK(path_is_within_dir("C:\\Other\\server.dll", "C:\\Guild") == FALSE, "unrelated dir should not match");
+    CHECK(path_is_within_dir(NULL, "C:\\Guild") == FALSE, "NULL path should not match");
+    CHECK(path_is_within_dir("C:\\Guild\\x.dll", NULL) == FALSE, "NULL dir should not match");
+}
+
 /* ---- Real server.dll fixture tests ---- */
 
 /* Looks up a hash in known_versions[]. Returns matching entry or NULL. */
@@ -751,14 +789,13 @@ static void run_fixture_tests(const wchar_t *fixture_path)
     /* Pattern matcher returns the expected RVA for this version. */
     DWORD                rva = 0;
     PATTERN_MATCH_RESULT r = find_srv_gameStreamReader_by_pattern(h, &rva);
-    CHECK(r == PATTERN_MATCH_SUCCESS, "pattern matcher returned %d (%s)", (int)r,
-          pattern_match_result_to_string(r));
+    CHECK(r == PATTERN_MATCH_SUCCESS, "pattern matcher returned %d (%s)", (int)r, pattern_match_result_to_string(r));
     CHECK(rva == v->target_rva, "RVA mismatch: got 0x%X, expected 0x%X", (unsigned)rva, (unsigned)v->target_rva);
 
     /* Prologue heuristic accepts the real bytes at the known RVA. */
     MODULEINFO mi = {0};
-    CHECK(GetModuleInformation(GetCurrentProcess(), h, &mi, sizeof(mi)) != 0,
-          "GetModuleInformation failed: %lu", GetLastError());
+    CHECK(GetModuleInformation(GetCurrentProcess(), h, &mi, sizeof(mi)) != 0, "GetModuleInformation failed: %lu",
+          GetLastError());
     if (mi.SizeOfImage > 0)
     {
         BOOL ok = validate_function_prologue((const unsigned char *)mi.lpBaseOfDll, v->target_rva, mi.SizeOfImage);
@@ -767,14 +804,12 @@ static void run_fixture_tests(const wchar_t *fixture_path)
 
     /* Uniqueness: pattern occurs exactly once. */
     const unsigned char needle[] = {
-        0x51, 0x8B, 0x4C, 0x24, 0x0C, 0x53, 0x55, 0x8B, 0x6C, 0x24, 0x10, 0x56, 0x57,
-        0x85, 0xED, 0x8B, 0xF1, 0x0F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x80, 0x7D, 0x5C,
-        0x72, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x45, 0x38,
+        0x51, 0x8B, 0x4C, 0x24, 0x0C, 0x53, 0x55, 0x8B, 0x6C, 0x24, 0x10, 0x56, 0x57, 0x85, 0xED, 0x8B, 0xF1, 0x0F,
+        0x84, 0x00, 0x00, 0x00, 0x00, 0x80, 0x7D, 0x5C, 0x72, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x45, 0x38,
     };
     const unsigned char mask[] = {
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
-        0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
     };
     if (mi.SizeOfImage > 0)
     {
@@ -908,6 +943,12 @@ int main(void)
     test_ini_missing_file_returns_null();
     printf("[test] test_ini_null_module_returns_null\n");
     test_ini_null_module_returns_null();
+    printf("[test] test_ini_prefers_serverpath_key\n");
+    test_ini_prefers_serverpath_key();
+    printf("[test] test_is_safe_server_path_rejects_absolute_and_traversal\n");
+    test_is_safe_server_path_rejects_absolute_and_traversal();
+    printf("[test] test_path_is_within_dir_requires_separator\n");
+    test_path_is_within_dir_requires_separator();
 
     WSACleanup();
 

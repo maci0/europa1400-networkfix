@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `hooks.c`: require a directory separator in the game-dir containment check
+  so `C:\Guild` no longer matches `C:\GuildExtra\…`; restore the
+  `server.dll` Sleep IAT on unload and on `MH_EnableHook` failure; bound the
+  IAT walk to `SizeOfImage`; treat truncated `GetModuleFileName` results as
+  failure.
+- `logging.c`: initialize `log_file` to `INVALID_HANDLE_VALUE` and tear down
+  the critical section on every `init_logging` failure path.
+- `main.c`: skip join/cleanup on process-exit `DLL_PROCESS_DETACH`
+  (`lpReserved != NULL`) to avoid loader deadlocks.
+
+### Changed
+
+- Docs now match the running code: env-var table, relative-only `ServerPath`,
+  `NETWORKFIX_DISABLE` as pass-through (not "hooks off"), fastsync independent
+  of the disable flag, ASI loading via dxwrapper under Wine, and harness
+  geometry `1152x864` (`cur_res=2`).
+
+### Added
+
+- Tests for `ServerPath` preference, `is_safe_server_path`, and
+  `path_is_within_dir` prefix-sibling rejection.
+- Harness A/B runner (`harness/scripts/ab.sh`) + `docker-compose.ab.yml`.
+  Freezes client game+wineserver on the first host `server.dll` send
+  `len>28`. A 25 s freeze on the 128 B payload did not desync either arm.
+
 ## [0.3.0] - 2026-08-10
 
 ### Fixed

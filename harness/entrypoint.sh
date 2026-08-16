@@ -27,8 +27,16 @@ if [[ "${CLEAN_PREFIX:-0}" != "0" ]]; then
   for cand in "/harness/setup_the_guild_gold_2.0.0.5.exe" "/tmp/setup.exe"; do if [[ -f "$cand" ]]; then xvfb-run --auto-servernum wine "$cand" /VERYSILENT /DIR=C:\Guild 2>&1 | tail -n 40 | tee -a "$LOG_DIR/entrypoint.log" 2>&1 || true; break; fi; done
 fi
 
-# --- netem (requires NET_ADMIN, apply to eth0 inside netns) ---
-if [[ -n "${GC_DELAY:-}" || -n "${GC_LOSS:-}" || -n "${GC_REORDER:-}" || -n "${GC_CORRUPT:-}" || -n "${GC_RATE:-}" ]]; then
+# --- traffic control (requires NET_ADMIN, apply to eth0 inside netns) ---
+# Prefer a tbf token-bucket (no sch_netem needed) when GC_TBF_RATE is set.
+# Fall back to netem when GC_DELAY/LOSS/REORDER/CORRUPT/RATE are set.
+if [[ -n "${GC_TBF_RATE:-}" ]]; then
+  echo "[entrypoint] Applying tbf to eth0: rate=${GC_TBF_RATE} burst=${GC_TBF_BURST:-4kb} latency=${GC_TBF_LAT:-400ms}" | tee -a "$LOG_DIR/netem.log"
+  if ! tc qdisc replace dev eth0 root tbf rate "$GC_TBF_RATE" burst "${GC_TBF_BURST:-4kb}" latency "${GC_TBF_LAT:-400ms}" 2>&1 | tee -a "$LOG_DIR/netem.log"; then
+    echo "[entrypoint] tc tbf failed (need --cap-add=NET_ADMIN)" | tee -a "$LOG_DIR/netem.log"
+  fi
+  tc qdisc show dev eth0 | tee -a "$LOG_DIR/netem.log" || true
+elif [[ -n "${GC_DELAY:-}" || -n "${GC_LOSS:-}" || -n "${GC_REORDER:-}" || -n "${GC_CORRUPT:-}" || -n "${GC_RATE:-}" ]]; then
   echo "[entrypoint] Applying netem to eth0: delay=${GC_DELAY:-0} loss=${GC_LOSS:-0} ..."
   NETEM_ARGS=()
   [[ -n "${GC_DELAY:-}" ]] && NETEM_ARGS+=(delay "$GC_DELAY")
@@ -37,7 +45,7 @@ if [[ -n "${GC_DELAY:-}" || -n "${GC_LOSS:-}" || -n "${GC_REORDER:-}" || -n "${G
   [[ -n "${GC_CORRUPT:-}" ]] && NETEM_ARGS+=(corrupt "$GC_CORRUPT")
   [[ -n "${GC_RATE:-}" ]] && NETEM_ARGS+=(rate "$GC_RATE")
   if [[ ${#NETEM_ARGS[@]} -gt 0 ]]; then
-    tc qdisc replace dev eth0 root netem "${NETEM_ARGS[@]}" 2>&1 | tee -a "$LOG_DIR/netem.log" || echo "[entrypoint] tc netem failed (need --cap-add=NET_ADMIN)" | tee -a "$LOG_DIR/netem.log"
+    tc qdisc replace dev eth0 root netem "${NETEM_ARGS[@]}" 2>&1 | tee -a "$LOG_DIR/netem.log" || echo "[entrypoint] tc netem failed (need --cap-add=NET_ADMIN or sch_netem)" | tee -a "$LOG_DIR/netem.log"
     tc qdisc show dev eth0 | tee -a "$LOG_DIR/netem.log" || true
   fi
 fi
@@ -45,7 +53,7 @@ fi
 # --- game.ini tweaks (idempotent) ---
 GAME_INI="$WINEPREFIX/drive_c/Guild/game.ini"
 if [[ -f "$GAME_INI" ]]; then
-  # Use CRLF-aware sed; keep reference tweaks: DIRECTWINDOW, no intro, 1024x768-ish via cur_res=2
+  # Use CRLF-aware sed; keep reference tweaks: DIRECTWINDOW, no intro, 1152x864 via cur_res=2
   sed -i 's/^\([Bb]ildmodus=\).*$/\1DIRECTWINDOW\r/' "$GAME_INI" 2>/dev/null || true
   sed -i 's/^\([Ss]how_intro=\).*$/\1 0\r/' "$GAME_INI" 2>/dev/null || true
   sed -i 's/^\([Cc]ur_res=\).*$/\12\r/' "$GAME_INI" 2>/dev/null || true
@@ -140,6 +148,7 @@ export WINEDLLOVERRIDES="mscoree,mshtml=;d3d8=n,b"
 set +e
 wine "$GAME_EXE" ${GAME_ARGS:-} >"$GAME_LOG" 2>&1 &
 GAME_PID=$!
+echo "$GAME_PID" > "$LOG_DIR/wine.pid"
 echo "[entrypoint] Wine PID $GAME_PID" | tee -a "$LOG_DIR/entrypoint.log"
 
 # --- optional xdotool driver ---

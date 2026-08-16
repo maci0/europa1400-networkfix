@@ -90,18 +90,24 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
         break;
 
     case DLL_PROCESS_DETACH:
-        // Ensure init thread finished before tearing down hooks/logging
+        // lpReserved != NULL means the process is terminating: the loader is
+        // already tearing down other threads, so waiting or freeing here can
+        // deadlock. Only join + cleanup on a real FreeLibrary unload.
         if (g_hInitThread)
         {
-            WaitForSingleObject(g_hInitThread, 2000);
+            if (lpReserved == NULL)
+            {
+                WaitForSingleObject(g_hInitThread, 10000);
+            }
             CloseHandle(g_hInitThread);
             g_hInitThread = NULL;
         }
-        logf("[HOOK] DLL detaching from process");
-
-        // Clean up hooks and logging
-        cleanup_hooks();
-        close_logging();
+        if (lpReserved == NULL)
+        {
+            logf("[HOOK] DLL detaching from process");
+            cleanup_hooks();
+            close_logging();
+        }
         break;
 
     case DLL_THREAD_ATTACH:

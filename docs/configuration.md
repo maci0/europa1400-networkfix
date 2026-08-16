@@ -78,10 +78,12 @@ To use a server.dll from a custom location:
 3. Save and restart the game
 
 **Path rules:**
-- Relative paths are relative to game executable directory
-- Absolute paths are supported (e.g., `C:\Custom\server.dll`)
-- Backslashes (`\`) and forward slashes (`/`) both work
-- Paths with spaces require no special quoting
+- Only **relative** paths under the game directory are accepted
+- Absolute paths (`C:\…`, UNC, leading `\`/`/`) are rejected (`is_safe_server_path`)
+- `..` traversal is rejected
+- The resolved canonical path must stay inside the game directory (`path_is_within_dir` requires a separator, so `C:\Guild` does not match `C:\GuildExtra\…`)
+- Must end in `.dll`
+- Surrounding quotes are stripped if present
 
 ## Build-time Configuration
 
@@ -250,7 +252,7 @@ The `send()` hook retries on buffer full conditions:
 
 ```c
 // Simplified logic
-while (total_sent < len && retry_count < MAX_SEND_RETRIES)
+while (total_sent < len && retry_count < SEND_MAX_RETRIES)
 {
     result = real_send(...);
     if (result == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK)
@@ -363,16 +365,20 @@ See [server-dll-versions.md](server-dll-versions.md) for detailed version docume
 
 ## Environment Variables
 
-The plugin does not currently use environment variables for configuration.
+All flags are read once at init (or first use) via `GetEnvironmentVariableA`.
+A value of `"1"` / `"0"` must be a single character — `env_flag` only treats
+length-1 `"1"` as true.
 
-**Possible future enhancement:**
-```
-NETWORKFIX_SERVER_PATH=C:\Custom\server.dll
-NETWORKFIX_LOG_LEVEL=DEBUG
-NETWORKFIX_MAX_RETRIES=100
-```
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `NETWORKFIX_DISABLE` | off | A/B baseline: hooks stay installed but `recv`/`send`/`srv_gameStreamReader` pass through with original game semantics. Does **not** disable fastsync, TCP_NODELAY injection setup, or the evt guard. |
+| `NETWORKFIX_NODELAY` | on | Set `TCP_NODELAY` on each `server.dll` socket the first time it is seen. `=0` keeps Nagle. Skipped when the fix is disabled. |
+| `NETWORKFIX_FASTSYNC` | on | Patch `server.dll`'s KERNEL32 `Sleep` IAT and clamp `Sleep(30)` to 1 ms. `=0` leaves the original 30 ms pump throttle. Independent of `NETWORKFIX_DISABLE`. |
+| `HARNESS_EVT_GUARD` | off (on in compose) | Signature-checked NULL guard on the game exe evt poll at `0x429800`. Harness-only. |
+| `HARNESS_TINY_BUFFERS` | off | If set to `N` > 0, shrink `SO_SNDBUF`/`SO_RCVBUF` to `N` bytes on each `server.dll` socket (fault injection). |
+| `HARNESS_NET_TRACE` | off | Hex-dump the first 48 bytes of `server.dll` send/recv payloads to `hook_log.txt`. |
 
-These would override default settings without requiring rebuild.
+See `harness/README.md` for A/B and endurance usage.
 
 ## Configuration Examples
 
@@ -420,13 +426,8 @@ If your server.dll is in a non-standard location:
 ServerPath=Mods\NetworkFix\server.dll
 ```
 
-**Or use absolute path:**
-```ini
-[Network]
-ServerPath=C:\Europa1400Custom\server.dll
-```
-
-**Restart game** - no rebuild needed.
+**Restart game** — no rebuild needed. Absolute `ServerPath` values are rejected
+and init falls back to `Server\server.dll` (or aborts if that file is missing).
 
 ### Example 4: Minimal Logging
 

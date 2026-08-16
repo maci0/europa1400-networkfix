@@ -54,7 +54,7 @@ void test_sleep(DWORD ms);
 #endif
 
 // Global state
-static BOOL      g_HooksInitialized = false;
+static BOOL g_HooksInitialized = false;
 // When false (NETWORKFIX_DISABLE=1) the ws2/stream hooks are still installed
 // (so harness fault-injection, tracing and fastsync keep working) but they
 // pass through with the game's original semantics: this is the A/B baseline.
@@ -89,7 +89,8 @@ static DWORD detect_server_version()
 
     // Get the module file path directly as wide characters
     wchar_t serverPath[MAX_PATH];
-    if (GetModuleFileNameW(g_hServerDll, serverPath, MAX_PATH) == 0)
+    DWORD   pathLen = GetModuleFileNameW(g_hServerDll, serverPath, MAX_PATH);
+    if (pathLen == 0 || pathLen >= MAX_PATH)
     {
         logf("[HOOK] Failed to get module file name: %lu", GetLastError());
         return 0;
@@ -167,7 +168,13 @@ static int get_available_bytes(SOCKET s)
  * @param serverPath Path to server.dll to load
  * @return TRUE if loaded successfully, FALSE on error
  */
-static BOOL is_safe_server_path(const char *path)
+#ifdef NETWORKFIX_TEST
+#define PATH_STATIC
+#else
+#define PATH_STATIC static
+#endif
+
+PATH_STATIC BOOL is_safe_server_path(const char *path)
 {
     if (!path || !path[0])
         return FALSE;
@@ -184,6 +191,20 @@ static BOOL is_safe_server_path(const char *path)
     return TRUE;
 }
 
+/* True iff `path` is `dir` itself or a descendant. Requires a directory
+ * separator after `dir` so "C:\Guild" does not match "C:\GuildExtra\...". */
+PATH_STATIC BOOL path_is_within_dir(const char *path, const char *dir)
+{
+    if (!path || !dir || !path[0] || !dir[0])
+        return FALSE;
+    size_t dlen = strlen(dir);
+    if (_strnicmp(path, dir, dlen) != 0)
+        return FALSE;
+    if (path[dlen] == '\0')
+        return TRUE;
+    return path[dlen] == '\\' || path[dlen] == '/';
+}
+
 static BOOL load_server_dll(const char *serverPath)
 {
     logf("[HOOK] Loading server.dll from: %s", serverPath);
@@ -193,19 +214,19 @@ static BOOL load_server_dll(const char *serverPath)
         return FALSE;
     }
     // Verify canonical path stays within game dir
-    char moduleDir[MAX_PATH] = {0};
-    if (GetModuleFileNameA(g_hModule, moduleDir, sizeof(moduleDir)) != 0)
+    char  moduleDir[MAX_PATH] = {0};
+    DWORD n = GetModuleFileNameA(g_hModule, moduleDir, sizeof(moduleDir));
+    if (n != 0 && n < sizeof(moduleDir))
     {
         PathRemoveFileSpecA(moduleDir);
         char combined[MAX_PATH] = {0}, full[MAX_PATH] = {0}, canonical[MAX_PATH] = {0};
         if (PathCombineA(combined, moduleDir, serverPath) && GetFullPathNameA(combined, sizeof(full), full, NULL) &&
             GetFullPathNameA(full, sizeof(canonical), canonical, NULL))
         {
-            // Must be under game dir
+            // Must be under game dir (prefix match alone accepts C:\GuildExtra)
             char gameDirCanonical[MAX_PATH] = {0};
             GetFullPathNameA(moduleDir, sizeof(gameDirCanonical), gameDirCanonical, NULL);
-            size_t glen = strlen(gameDirCanonical);
-            if (_strnicmp(canonical, gameDirCanonical, glen) != 0)
+            if (!path_is_within_dir(canonical, gameDirCanonical))
             {
                 logf("[HOOK] Rejected path outside game dir: %s -> %s", serverPath, canonical);
                 return FALSE;
@@ -262,9 +283,10 @@ static BOOL init_server_module(void)
     BOOL hasPreHash = FALSE;
     {
         // Build absolute file path for pre-hash (best-effort)
-        char moduleDir[MAX_PATH] = {0};
-        char filePath[MAX_PATH] = {0};
-        if (GetModuleFileNameA(g_hModule, moduleDir, sizeof(moduleDir)) != 0 && PathRemoveFileSpecA(moduleDir) &&
+        char  moduleDir[MAX_PATH] = {0};
+        char  filePath[MAX_PATH] = {0};
+        DWORD pathLen = GetModuleFileNameA(g_hModule, moduleDir, sizeof(moduleDir));
+        if (pathLen != 0 && pathLen < sizeof(moduleDir) && PathRemoveFileSpecA(moduleDir) &&
             PathCombineA(filePath, moduleDir, serverPath))
         {
             wchar_t wpath[MAX_PATH];
@@ -292,7 +314,8 @@ static BOOL init_server_module(void)
     if (hasPreHash)
     {
         wchar_t loadedPath[MAX_PATH];
-        if (GetModuleFileNameW(g_hServerDll, loadedPath, MAX_PATH) != 0)
+        DWORD   loadedLen = GetModuleFileNameW(g_hServerDll, loadedPath, MAX_PATH);
+        if (loadedLen != 0 && loadedLen < MAX_PATH)
         {
             char postHash[65] = {0};
             if (calculate_file_sha256(loadedPath, postHash, sizeof(postHash)))
@@ -478,7 +501,7 @@ static void maybe_set_nodelay(SOCKET s)
  * send), without needing host kernel netem. Applied once per socket. */
 static void maybe_shrink_buffers(SOCKET s)
 {
-    static int  tiny = -1; // -1 unknown, 0 off, >0 target bytes
+    static int    tiny = -1; // -1 unknown, 0 off, >0 target bytes
     static SOCKET seen[64];
     static int    seen_n = 0;
     if (tiny == -1)
@@ -710,7 +733,8 @@ const char *get_server_path_from_ini(HMODULE hModule)
     }
 
     // Get the path of the DLL using GetModuleFileNameA()
-    if (GetModuleFileNameA(hModule, iniPath, sizeof(iniPath)) == 0)
+    DWORD iniLen = GetModuleFileNameA(hModule, iniPath, sizeof(iniPath));
+    if (iniLen == 0 || iniLen >= sizeof(iniPath))
     {
         logf("[CONFIG] Failed to get module file name: %lu", GetLastError());
         return NULL;
@@ -810,8 +834,7 @@ static BOOL create_hook_api(const wchar_t *module, const char *function, void *h
 #define EVT_POLL_ADDR ((LPVOID)0x429800)
 #define EVT_TABLE_PTR ((void *volatile *)0x6B7E94)
 /* push ebx; push esi; xor ebx,ebx; xor esi,esi; mov eax,[0x6B7E94]; add eax,esi */
-static const uint8_t evt_poll_sig[] = {0x53, 0x56, 0x33, 0xDB, 0x33, 0xF6, 0xA1,
-                                       0x94, 0x7E, 0x6B, 0x00, 0x03, 0xC6};
+static const uint8_t evt_poll_sig[] = {0x53, 0x56, 0x33, 0xDB, 0x33, 0xF6, 0xA1, 0x94, 0x7E, 0x6B, 0x00, 0x03, 0xC6};
 static void(__cdecl *real_evt_poll)(void) = NULL;
 
 static void __cdecl hook_evt_poll(void)
@@ -844,8 +867,9 @@ static BOOL env_flag(const char *name)
  * NETWORKFIX_FASTSYNC=0.
  */
 static VOID(WINAPI *real_server_sleep)(DWORD) = NULL;
+static IMAGE_THUNK_DATA *g_server_sleep_iat = NULL;
 
-static VOID WINAPI hook_server_sleep(DWORD ms)
+static VOID WINAPI       hook_server_sleep(DWORD ms)
 {
     if (ms == 30)
     {
@@ -866,9 +890,14 @@ static void patch_server_sleep_iat(void)
         }
     }
 
-    const BYTE              *base = (const BYTE *)g_hServerDll;
-    const IMAGE_DOS_HEADER  *dos = (const IMAGE_DOS_HEADER *)base;
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE)
+    if (!g_hServerDll || g_server_size == 0)
+        return;
+
+    const BYTE             *base = (const BYTE *)g_hServerDll;
+    const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)base;
+    if (g_server_size < sizeof(IMAGE_DOS_HEADER) || dos->e_magic != IMAGE_DOS_SIGNATURE)
+        return;
+    if ((size_t)dos->e_lfanew + sizeof(IMAGE_NT_HEADERS) > g_server_size)
         return;
     const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE)
@@ -876,18 +905,30 @@ static void patch_server_sleep_iat(void)
     const IMAGE_DATA_DIRECTORY *dir = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     if (dir->VirtualAddress == 0 || dir->Size == 0)
         return;
+    if ((size_t)dir->VirtualAddress + sizeof(IMAGE_IMPORT_DESCRIPTOR) > g_server_size)
+        return;
 
     const IMAGE_IMPORT_DESCRIPTOR *imp = (const IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress);
-    for (; imp->Name != 0; imp++)
+    const IMAGE_IMPORT_DESCRIPTOR *imp_end = (const IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress + dir->Size);
+    for (; imp < imp_end && imp->Name != 0; imp++)
     {
+        if ((size_t)imp->Name >= g_server_size)
+            continue;
         const char *dllName = (const char *)(base + imp->Name);
         if (_stricmp(dllName, "KERNEL32.dll") != 0)
+            continue;
+        if (imp->OriginalFirstThunk == 0 || imp->FirstThunk == 0)
+            continue;
+        if ((size_t)imp->OriginalFirstThunk + sizeof(IMAGE_THUNK_DATA) > g_server_size ||
+            (size_t)imp->FirstThunk + sizeof(IMAGE_THUNK_DATA) > g_server_size)
             continue;
         const IMAGE_THUNK_DATA *nameThunk = (const IMAGE_THUNK_DATA *)(base + imp->OriginalFirstThunk);
         IMAGE_THUNK_DATA       *iatThunk = (IMAGE_THUNK_DATA *)(base + imp->FirstThunk);
         for (; nameThunk->u1.AddressOfData != 0; nameThunk++, iatThunk++)
         {
             if (nameThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)
+                continue;
+            if ((size_t)nameThunk->u1.AddressOfData + sizeof(IMAGE_IMPORT_BY_NAME) > g_server_size)
                 continue;
             const IMAGE_IMPORT_BY_NAME *ibn = (const IMAGE_IMPORT_BY_NAME *)(base + nameThunk->u1.AddressOfData);
             if (strcmp((const char *)ibn->Name, "Sleep") != 0)
@@ -900,6 +941,7 @@ static void patch_server_sleep_iat(void)
             }
             real_server_sleep = (VOID(WINAPI *)(DWORD))(uintptr_t)iatThunk->u1.Function;
             iatThunk->u1.Function = (uintptr_t)hook_server_sleep;
+            g_server_sleep_iat = iatThunk;
             VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function), oldProtect, &oldProtect);
             logf("[FASTSYNC] Patched server.dll Sleep IAT slot %p (orig %p)", (void *)&iatThunk->u1.Function,
                  (void *)real_server_sleep);
@@ -907,6 +949,24 @@ static void patch_server_sleep_iat(void)
         }
     }
     logf("[FASTSYNC] server.dll KERNEL32 Sleep import not found — pump throttle left in place");
+}
+
+static void restore_server_sleep_iat(void)
+{
+    if (!g_server_sleep_iat || !real_server_sleep)
+        return;
+
+    DWORD oldProtect;
+    if (VirtualProtect(&g_server_sleep_iat->u1.Function, sizeof(g_server_sleep_iat->u1.Function), PAGE_READWRITE,
+                       &oldProtect))
+    {
+        g_server_sleep_iat->u1.Function = (uintptr_t)real_server_sleep;
+        VirtualProtect(&g_server_sleep_iat->u1.Function, sizeof(g_server_sleep_iat->u1.Function), oldProtect,
+                       &oldProtect);
+        logf("[FASTSYNC] Restored server.dll Sleep IAT");
+    }
+    g_server_sleep_iat = NULL;
+    real_server_sleep = NULL;
 }
 
 /* Best-effort: failure only means the harness guard is off, never fails init. */
@@ -1059,6 +1119,7 @@ BOOL init_hooks(void)
         logf("[HOOK] Failed to enable hooks: %d", (int)status);
         MH_DisableHook(MH_ALL_HOOKS);
         MH_Uninitialize();
+        restore_server_sleep_iat();
         reset_server_globals();
         return FALSE;
     }
@@ -1089,14 +1150,9 @@ void cleanup_hooks(void)
 
     logf("[HOOK] Cleanup completed (Disable: %d, Uninit: %d)", (int)disableStatus, (int)uninitStatus);
 
-    // Free the globally loaded server.dll
-
-    if (g_hServerDll)
-    {
-        logf("[HOOK] Freeing server.dll handle");
-        FreeLibrary(g_hServerDll);
-        g_hServerDll = NULL;
-    }
-
+    // Restore the Sleep IAT before FreeLibrary so server.dll is left intact
+    // if another module still holds a reference.
+    restore_server_sleep_iat();
+    reset_server_globals();
     g_HooksInitialized = false;
 }
