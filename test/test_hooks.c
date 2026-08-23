@@ -116,17 +116,20 @@ static int WSAAPI  mock_recv(SOCKET s, char *buf, int len, int flags)
 }
 
 /* ---- Scriptable send mock ---- */
+#define SEND_CAPTURE_SIZE 64
 typedef struct
 {
-    int chunk_size;  /* bytes to accept per successful send call (<=0 -> all remaining) */
-    int block_count; /* WSAEWOULDBLOCK errors before each successful chunk */
-    int abort_after; /* bytes after which to inject abort_error (-1 disabled) */
-    int abort_error; /* WSA error to inject (e.g. WSAECONNRESET) */
-    int zero_at;     /* total bytes after which to return 0 ("connection closed") (-1 disabled) */
-    int stall_after; /* total bytes after which every call is WSAEWOULDBLOCK (-1 disabled) */
-    int call_count;
-    int total_accepted;
-    int block_streak; /* internal: blocks emitted in current streak */
+    int  chunk_size;  /* bytes to accept per successful send call (<=0 -> all remaining) */
+    int  block_count; /* WSAEWOULDBLOCK errors before each successful chunk */
+    int  abort_after; /* bytes after which to inject abort_error (-1 disabled) */
+    int  abort_error; /* WSA error to inject (e.g. WSAECONNRESET) */
+    int  zero_at;     /* total bytes after which to return 0 ("connection closed") (-1 disabled) */
+    int  stall_after; /* total bytes after which every call is WSAEWOULDBLOCK (-1 disabled) */
+    int  call_count;
+    int  total_accepted;
+    int  block_streak;                /* internal: blocks emitted in current streak */
+    char captured[SEND_CAPTURE_SIZE]; /* concatenation of every byte handed to real_send */
+    int  captured_len;
 } send_script;
 
 static send_script g_send_script;
@@ -134,7 +137,6 @@ static send_script g_send_script;
 static int WSAAPI  mock_send(SOCKET s, const char *buf, int len, int flags)
 {
     (void)s;
-    (void)buf;
     (void)flags;
     g_send_script.call_count++;
 
@@ -167,6 +169,13 @@ static int WSAAPI  mock_send(SOCKET s, const char *buf, int len, int flags)
     int chunk = g_send_script.chunk_size > 0 ? g_send_script.chunk_size : len;
     if (chunk > len)
         chunk = len;
+    /* Capture the exact bytes the hook forwarded so tests can detect a retry
+     * loop that resumes at the wrong offset (duplicated or dropped payload). */
+    if (buf && chunk > 0 && g_send_script.captured_len + chunk <= SEND_CAPTURE_SIZE)
+    {
+        memcpy(g_send_script.captured + g_send_script.captured_len, buf, (size_t)chunk);
+        g_send_script.captured_len += chunk;
+    }
     g_send_script.total_accepted += chunk;
     return chunk;
 }
@@ -185,6 +194,9 @@ static void reset_state(void)
     g_pump_calls = 0;
     real_recv = mock_recv;
     real_send = mock_send;
+    /* Defensive: passthrough tests toggle this; a future test inserted between
+     * them must not inherit a stale FALSE. */
+    g_test_force_caller_server = TRUE;
     WSASetLastError(0);
 }
 
@@ -208,6 +220,19 @@ static int g_failures = 0;
         reset_state();                                                                             \
         name();                                                                                    \
     } while (0)
+
+/* Asserts the mock received exactly the first `n` bytes of `msg`, in order. */
+static void check_captured_bytes(const char *msg, int n)
+{
+    CHECK(g_send_script.captured_len == n, "expected %d bytes forwarded to winsock, got %d", n,
+          g_send_script.captured_len);
+    for (int i = 0; i < n && i < g_send_script.captured_len; i++)
+    {
+        CHECK(g_send_script.captured[i] == msg[i],
+              "byte %d forwarded to winsock differs from payload (%02X != %02X)", i,
+              (unsigned char)g_send_script.captured[i], (unsigned char)msg[i]);
+    }
+}
 
 /* ---- Tests ---- */
 
@@ -285,6 +310,7 @@ static void test_send_retries_then_succeeds(void)
     CHECK(g_pump_calls == 3, "expected 3 message-pump calls during retries, got %d", g_pump_calls);
     CHECK(g_send_script.total_accepted == 10, "expected 10 bytes accepted, got %d",
           g_send_script.total_accepted);
+    check_captured_bytes(msg, 10);
 }
 
 /* send: short writes loop until full payload is delivered. */
@@ -298,6 +324,20 @@ static void test_send_handles_partial_sends(void)
     CHECK(r == 10, "expected 10 bytes, got %d", r);
     CHECK(g_send_script.call_count == 4, "expected 4 send calls, got %d", g_send_script.call_count);
     CHECK(g_sleep_calls == 0, "expected no sleeps on partial sends, got %d", g_sleep_calls);
+    check_captured_bytes(msg, 10);
+}
+
+/* send: len <= 0 exits the retry loop immediately without ever calling into
+ * winsock (documented passthrough of the original implementation). */
+static void test_send_zero_length_noop_returns_zero(void)
+{
+    CHECK(hook_send((SOCKET)1, NULL, 0, 0) == 0, "zero-length send must return 0");
+    CHECK(g_send_script.call_count == 0, "winsock must not be called for len=0, was %d times",
+          g_send_script.call_count);
+    CHECK(hook_send((SOCKET)1, NULL, -5, 0) == 0, "negative-length send must return 0");
+    CHECK(g_send_script.call_count == 0,
+          "winsock must not be called for negative len, was %d times", g_send_script.call_count);
+    CHECK(g_sleep_calls == 0 && g_pump_calls == 0, "no retries expected");
 }
 
 /* send: WSAECONNRESET after partial progress returns the partial total, not SOCKET_ERROR. */
@@ -313,6 +353,7 @@ static void test_send_connreset_returns_partial(void)
     CHECK(r == 4, "expected partial 4, got %d", r);
     CHECK(WSAGetLastError() == WSAECONNRESET, "expected WSAECONNRESET preserved, got %d",
           WSAGetLastError());
+    check_captured_bytes(msg, 4);
 }
 
 /* send: WSAECONNABORTED with zero progress returns SOCKET_ERROR. */
@@ -339,6 +380,7 @@ static void test_send_zero_indicates_closed(void)
     int r = hook_send((SOCKET)1, msg, 10, 0);
 
     CHECK(r == 6, "expected 6 bytes before close, got %d", r);
+    check_captured_bytes(msg, 6);
 }
 
 /* send: retry counter resets after a successful chunk, so an interleaved
@@ -353,6 +395,7 @@ static void test_send_retry_counter_resets(void)
 
     CHECK(r == 4, "expected 4 bytes, got %d", r);
     CHECK(g_sleep_calls == 8, "expected 8 sleeps (2 per chunk x 4), got %d", g_sleep_calls);
+    check_captured_bytes(msg, 4);
 }
 
 /* send: persistent WSAEWOULDBLOCK with zero progress exhausts SEND_MAX_RETRIES
@@ -390,6 +433,7 @@ static void test_send_max_retries_keeps_partial_progress(void)
     CHECK(WSAGetLastError() == WSAETIMEDOUT, "expected WSAETIMEDOUT, got %d", WSAGetLastError());
     CHECK(g_sleep_calls == SEND_MAX_RETRIES, "expected %d sleeps after stall, got %d",
           SEND_MAX_RETRIES, g_sleep_calls);
+    check_captured_bytes(msg, 4);
 }
 
 /* send: non-server caller bypasses retry — raw WSAEWOULDBLOCK propagates */
@@ -405,6 +449,8 @@ static void test_send_non_server_passthrough(void)
           WSAGetLastError());
     CHECK(g_sleep_calls == 0, "expected 0 sleeps on passthrough, got %d", g_sleep_calls);
     CHECK(g_pump_calls == 0, "expected 0 message-pump calls on passthrough, got %d", g_pump_calls);
+    CHECK(g_send_script.call_count == 1, "passthrough must call winsock exactly once, got %d",
+          g_send_script.call_count);
     g_test_force_caller_server = TRUE;
 }
 
@@ -417,6 +463,9 @@ static void test_recv_non_server_passthrough(void)
     CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR passthrough, got %d", r);
     CHECK(WSAGetLastError() == WSAEWOULDBLOCK, "expected WSAEWOULDBLOCK preserved, got %d",
           WSAGetLastError());
+    CHECK(g_recv_script.call_count == 1,
+          "passthrough must not retry; expected exactly 1 real_recv call, got %d",
+          g_recv_script.call_count);
     g_test_force_caller_server = TRUE;
 }
 
@@ -853,6 +902,44 @@ static void test_sha256_undersized_buffer_returns_false(void)
     DeleteFileW(path);
 }
 
+/* ---- known_versions table sanity ---- */
+
+/* Entries are strcmp-matched against the lowercase-hex output of
+ * calculate_file_sha256 and their target_rva is added to the loaded module
+ * base, so a malformed row (wrong hex case/length, zero RVA) would silently
+ * break version detection for that build unless its exact fixture DLL
+ * happens to be present. */
+static void test_known_versions_table_entries_are_wellformed(void)
+{
+    int count = 0;
+    for (; known_versions[count].sha256_hash != NULL; count++)
+    {
+        const server_version_info_t *v = &known_versions[count];
+        CHECK(is_lowercase_hex_64(v->sha256_hash), "entry %d: hash not 64 lowercase hex chars: %s",
+              count, v->sha256_hash);
+        CHECK(v->target_rva != 0, "entry %d (%s): target_rva must be nonzero", count,
+              v->version_name ? v->version_name : "(null)");
+        CHECK(v->version_name != NULL && v->version_name[0] != '\0',
+              "entry %d: version_name missing or empty", count);
+    }
+    CHECK(count >= 1, "known_versions table must not be empty");
+
+    /* Production lookup loops stop at a NULL hash; the sentinel must also
+     * zero every other field so iteration can never read stale data. */
+    CHECK(known_versions[count].target_rva == 0 && known_versions[count].version_name == NULL,
+          "table must end with a full zero sentinel entry");
+
+    for (int i = 0; i < count; i++)
+    {
+        for (int j = i + 1; j < count; j++)
+        {
+            CHECK(strcmp(known_versions[i].sha256_hash, known_versions[j].sha256_hash) != 0,
+                  "duplicate hash maps %s and %s to one version", known_versions[i].version_name,
+                  known_versions[j].version_name);
+        }
+    }
+}
+
 /* ---- get_server_path_from_ini tests ---- */
 
 /* Writes a game.ini next to the running .exe (where the function looks). Returns
@@ -962,11 +1049,17 @@ static void test_ini_prefers_serverpath_key(void)
 static void test_is_safe_server_path_rejects_absolute_and_traversal(void)
 {
     CHECK(is_safe_server_path("Server\\server.dll") == TRUE, "relative .dll should be accepted");
+    CHECK(is_safe_server_path("Server/SUB.DLL") == TRUE,
+          "extension match is case-insensitive and forward slashes are relative");
     CHECK(is_safe_server_path("C:\\Guild\\server.dll") == FALSE,
           "drive-letter path should be rejected");
     CHECK(is_safe_server_path("\\\\unc\\share\\server.dll") == FALSE,
           "UNC path should be rejected");
+    CHECK(is_safe_server_path("/abs/server.dll") == FALSE,
+          "rooted forward-slash path should be rejected");
     CHECK(is_safe_server_path("Server\\..\\server.dll") == FALSE, "traversal should be rejected");
+    CHECK(is_safe_server_path("a..b\\server.dll") == FALSE,
+          "any embedded '..' must be rejected (conservative strstr check)");
     CHECK(is_safe_server_path("Server\\server.exe") == FALSE, "non-dll should be rejected");
     CHECK(is_safe_server_path("") == FALSE, "empty path should be rejected");
     CHECK(is_safe_server_path(NULL) == FALSE, "NULL path should be rejected");
@@ -976,6 +1069,8 @@ static void test_path_is_within_dir_requires_separator(void)
 {
     CHECK(path_is_within_dir("C:\\Guild\\Server\\server.dll", "C:\\Guild") == TRUE,
           "descendant should match");
+    CHECK(path_is_within_dir("c:\\guild\\x.dll", "C:\\GUILD") == TRUE,
+          "prefix comparison is case-insensitive");
     CHECK(path_is_within_dir("C:\\Guild", "C:\\Guild") == TRUE, "exact dir should match");
     CHECK(path_is_within_dir("C:\\GuildExtra\\server.dll", "C:\\Guild") == FALSE,
           "prefix sibling must not match");
@@ -983,6 +1078,7 @@ static void test_path_is_within_dir_requires_separator(void)
           "unrelated dir should not match");
     CHECK(path_is_within_dir(NULL, "C:\\Guild") == FALSE, "NULL path should not match");
     CHECK(path_is_within_dir("C:\\Guild\\x.dll", NULL) == FALSE, "NULL dir should not match");
+    CHECK(path_is_within_dir("C:\\Guild\\x.dll", "") == FALSE, "empty dir should not match");
 }
 
 /* An empty value (quoted or bare) counts as absent so callers fall back to
@@ -1498,6 +1594,7 @@ int main(void)
     RUN(test_recv_propagates_other_errors);
     RUN(test_send_retries_then_succeeds);
     RUN(test_send_handles_partial_sends);
+    RUN(test_send_zero_length_noop_returns_zero);
     RUN(test_send_connreset_returns_partial);
     RUN(test_send_connaborted_zero_progress);
     RUN(test_send_zero_indicates_closed);
@@ -1535,6 +1632,7 @@ int main(void)
     RUN(test_sha256_fips_known_answers);
     RUN(test_sha256_missing_file_returns_false);
     RUN(test_sha256_undersized_buffer_returns_false);
+    RUN(test_known_versions_table_entries_are_wellformed);
     RUN(test_real_server_dll_fixtures);
     RUN(test_pattern_matcher_does_not_match_unrelated_dll);
     RUN(test_init_server_module_falls_back_to_default);
