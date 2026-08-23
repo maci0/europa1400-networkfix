@@ -21,6 +21,9 @@ static const uint32_t MAX_LOG_LINES = 50000u;     /* Max lines before rollover *
 static const size_t   LOG_BUFFER_SIZE = 2048;     /* Log message buffer size */
 static const size_t   TIMESTAMP_BUFFER_SIZE = 64; /* Timestamp buffer size */
 
+/* Distinct rate-limit keys tracked at once; overflow evicts the oldest. */
+#define LOG_RATE_LIMIT_SLOTS 10
+
 // Resets the log file by truncating it to zero length.
 // This is called when the log file exceeds the maximum number of lines.
 static void reset_log_file(void)
@@ -239,7 +242,7 @@ void logf_rate_limited(const char *key, const char *fmt, ...)
     {
         char  key[64];
         DWORD last_logged;
-    } rate_limit_cache[10] = {0};
+    } rate_limit_cache[LOG_RATE_LIMIT_SLOTS] = {0};
 
     if (!key || !fmt)
         return;
@@ -255,7 +258,7 @@ void logf_rate_limited(const char *key, const char *fmt, ...)
     int cache_slot = -1;
 
     // Find existing entry or empty slot
-    for (int i = 0; i < 10; i++)
+    for (int i = 0; i < LOG_RATE_LIMIT_SLOTS; i++)
     {
         if (strcmp(rate_limit_cache[i].key, key) == 0)
         {
@@ -273,7 +276,7 @@ void logf_rate_limited(const char *key, const char *fmt, ...)
     {
         cache_slot = 0;
         DWORD oldest_time = rate_limit_cache[0].last_logged;
-        for (int i = 1; i < 10; i++)
+        for (int i = 1; i < LOG_RATE_LIMIT_SLOTS; i++)
         {
             if (rate_limit_cache[i].last_logged < oldest_time)
             {

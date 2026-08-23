@@ -39,11 +39,9 @@ HMODULE g_hModule = NULL;
 
 /* ---- Sleep counter (replaces Sleep() inside hook_send retry loop) ---- */
 static int g_sleep_calls = 0;
-static int g_sleep_total_ms = 0;
 void       test_sleep(DWORD ms)
 {
     g_sleep_calls++;
-    g_sleep_total_ms += (int)ms;
 }
 
 /* ---- Scriptable recv mock ---- */
@@ -153,7 +151,6 @@ static void reset_state(void)
     g_send_script.zero_at = -1;
     g_send_script.stall_after = -1;
     g_sleep_calls = 0;
-    g_sleep_total_ms = 0;
     real_recv = mock_recv;
     real_send = mock_send;
     WSASetLastError(0);
@@ -362,7 +359,7 @@ static void test_recv_non_server_passthrough(void)
 /* ---- srv_gameStreamReader mock + tests ---- */
 static int         g_srv_call_count;
 static int         g_srv_return;
-static int         g_srv_set_ctx_e; /* if non-zero, mock writes this into ctx[0xE] */
+static int         g_srv_set_ctx_e; /* if non-zero, mock writes this into ctx[SRV_CTX_ERROR_INDEX] */
 
 static int __cdecl mock_srv(int *ctx, int received, int totalLen)
 {
@@ -371,7 +368,7 @@ static int __cdecl mock_srv(int *ctx, int received, int totalLen)
     g_srv_call_count++;
     if (g_srv_set_ctx_e != 0)
     {
-        ctx[0xE] = g_srv_set_ctx_e;
+        ctx[SRV_CTX_ERROR_INDEX] = g_srv_set_ctx_e;
     }
     return g_srv_return;
 }
@@ -402,7 +399,7 @@ static void test_srv_negative_ctx_e_is_zeroed(void)
     int r = hook_srv_gameStreamReader(ctx, 100, 200);
 
     CHECK(r == 42, "expected return 42, got %d", r);
-    CHECK(ctx[0xE] == 0, "expected ctx[0xE] zeroed, got %d", ctx[0xE]);
+    CHECK(ctx[SRV_CTX_ERROR_INDEX] == 0, "expected ctx[SRV_CTX_ERROR_INDEX] zeroed, got %d", ctx[SRV_CTX_ERROR_INDEX]);
 }
 
 static void test_srv_negative_return_is_zeroed(void)
@@ -422,11 +419,12 @@ static void test_srv_clean_passes_through(void)
     g_srv_return = 123;
 
     int ctx[32] = {0};
-    ctx[0xE] = 50;
+    ctx[SRV_CTX_ERROR_INDEX] = 50;
     int r = hook_srv_gameStreamReader(ctx, 100, 200);
 
     CHECK(r == 123, "expected return 123, got %d", r);
-    CHECK(ctx[0xE] == 50, "expected ctx[0xE] untouched, got %d", ctx[0xE]);
+    CHECK(ctx[SRV_CTX_ERROR_INDEX] == 50, "expected ctx[SRV_CTX_ERROR_INDEX] untouched, got %d",
+          ctx[SRV_CTX_ERROR_INDEX]);
 }
 
 /* ---- pattern matcher tests ---- */
