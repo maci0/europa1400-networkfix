@@ -264,18 +264,21 @@ typedef int (WSAAPI *RecvFunc_t)(SOCKET, char*, int, int);
 **Function documentation:**
 ```c
 /**
- * Creates and enables a hook for the specified function.
+ * Creates an API hook with consistent logging.
  *
- * Uses MinHook to create an inline hook that redirects calls to the target
- * function through our hook handler. The original function remains callable
- * via the trampoline pointer.
+ * Uses MinHook (MH_CreateHookApi) to create an inline hook that redirects
+ * calls to the target function through our hook handler. The original
+ * function remains callable via the trampoline pointer.
  *
- * @param module_name Name of DLL containing target function (e.g., "ws2_32.dll")
- * @param func_name Name of function to hook (e.g., "recv")
+ * @param module Name of DLL containing target function (e.g., L"ws2_32")
+ * @param function Name of function to hook (e.g., "recv")
  * @param hook_func Pointer to our hook handler function
+ * @param original_func Pointer to store the original function pointer
+ * @param hook_name Name for logging (e.g., "recv")
  * @return TRUE if hook created successfully, FALSE otherwise
  */
-static BOOL create_hook(const char *module_name, const char *func_name, void *hook_func)
+static BOOL create_hook_api(const wchar_t *module, const char *function, void *hook_func,
+                            void **original_func, const char *hook_name)
 {
     // Implementation
 }
@@ -303,14 +306,14 @@ if (ctx[0xE] < 0)
 ```c
 if (MH_Initialize() != MH_OK)
 {
-    log_msg("[ERROR] MinHook initialization failed");
+    log_msg("[HOOK] MinHook initialization failed");
     return FALSE;
 }
 
-HMODULE hServer = GetModuleHandle("server.dll");
+HMODULE hServer = LoadLibraryA("Server\\server.dll");
 if (!hServer)
 {
-    log_msg("[ERROR] Failed to load server.dll");
+    log_msg("[HOOK] Failed to load server.dll (error: %lu)", GetLastError());
     return FALSE;
 }
 ```
@@ -323,13 +326,12 @@ if (!init_logging(hModule))
     OutputDebugStringA("[HOOK] Failed to initialize logging");
     return FALSE;
 }
-
-// Log hook creation failures (but continue)
-if (!create_hook("ws2_32.dll", "recv", hook_recv))
-{
-    log_msg("[ERROR] Failed to hook recv, continuing anyway");
-}
 ```
+
+**Core hooks are all-or-nothing:** if any hook in `create_hooks()` fails,
+`init_hooks()` tears down everything and returns FALSE, so the game runs fully
+unpatched instead of with a partial fix. Only best-effort extras (fastsync IAT
+patch, harness evt guard) log-and-skip on failure.
 
 ## Debugging
 
@@ -389,7 +391,8 @@ All log output goes to `hook_log.txt` in game directory.
 - `[WS2 HOOK]` - Winsock recv/send calls
 - `[SERVER HOOK]` - Server.dll function calls
 - `[CONFIG]` - Configuration file parsing
-- `[ERROR]` - Error conditions
+- `[PATTERN]` / `[SHA256]` - Version detection
+- `[NODELAY]` / `[FASTSYNC]` - Socket and pump-timing fixes
 
 **Add logging:**
 ```c
@@ -402,7 +405,10 @@ log_msg("[HOOK] Hook created successfully");
 log_msg("[WS2 HOOK] recv() returned %d bytes, socket %d", bytes, socket);
 
 // Error with details
-log_msg("[ERROR] Failed to create hook: %s (error %d)", func_name, GetLastError());
+log_msg("[HOOK] Failed to create hook: %s (%d)", MH_StatusToString(status), (int)status);
+
+// Repeated hot-path message (rate limited to once per 5 s per key)
+log_msg_rate_limited("send_wouldblock", "[WS2 HOOK] send: buffer full (retry %d)", retry);
 ```
 
 ### Debugging Hook Issues
@@ -615,20 +621,18 @@ int WSAAPI hook_closesocket(SOCKET s)
 }
 ```
 
-**4. Create hook in init_hooks():**
+**4. Create hook in create_hooks() (src/hooks.c):**
 ```c
-BOOL init_hooks(void)
+static BOOL create_hooks(void)
 {
     // ... existing hooks ...
 
-    // Create closesocket hook
-    if (!create_hook("ws2_32.dll", "closesocket", hook_closesocket, (void**)&real_closesocket))
-    {
-        log_msg("[ERROR] Failed to hook closesocket");
-        // Continue anyway
-    }
+    // Create closesocket hook. Core hooks are all-or-nothing: a failure
+    // here aborts initialization (see success &= below and init_hooks()).
+    success &= create_hook_api(L"ws2_32", "closesocket", hook_closesocket,
+                               (void **)&real_closesocket, "closesocket");
 
-    // ... rest of initialization ...
+    // ... rest of hook creation ...
 }
 ```
 

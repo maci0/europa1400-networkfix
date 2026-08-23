@@ -60,7 +60,8 @@ On a native Windows Gold Edition install the game's ASI loader picks up `.asi` f
 
 ### DllMain Entry Point
 
-[src/main.c:58-105](../src/main.c#L58-L105)
+[src/main.c:61-120](../src/main.c#L61-L120) (abridged; the real code checks every
+return value and fails attach when logging or the init thread cannot start):
 
 ```c
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
@@ -417,23 +418,21 @@ if (is_caller_from_server((uintptr_t)return_addr))
 - `[HOOK]` - Initialization and hook creation status
 - `[WS2 HOOK]` - Winsock function interception events
 - `[SERVER HOOK]` - Server.dll function hook events
-- `[CONFIG]` - Configuration parsing
-- `[ERROR]` - Error conditions
+- `[CONFIG]` - game.ini parsing
+- `[PATTERN]` / `[SHA256]` - Version detection details
+- `[NODELAY]` / `[FASTSYNC]` - Socket and pump-timing fixes
 
-### Graceful Degradation
+### Failure Policy: All-or-Nothing Hook Install
 
-If a hook fails to install:
-- Log the failure
-- Continue with other hooks
-- Game may have reduced stability but won't crash
+If any core hook fails to install (`srv_gameStreamReader`, `recv`, `send`,
+`GetTickCount`), `init_hooks()` tears down everything it created
+(`MH_Uninitialize` + `reset_server_globals`) and reports failure. The game then
+runs completely unpatched rather than with a partial fix, because a half-installed
+set (for example send-retry without the recv `WSAEWOULDBLOCK` conversion) could
+change protocol timing in ways the game never expects.
 
-```c
-if (!create_hook("ws2_32.dll", "recv", hook_recv))
-{
-    log_msg("[ERROR] Failed to hook recv, continuing anyway");
-    // Game continues running
-}
-```
+Best-effort extras are the exception and only log-and-skip on failure:
+fastsync (Sleep IAT patch) and the harness evt guard never fail initialization.
 
 ## Performance Considerations
 
@@ -442,14 +441,15 @@ if (!create_hook("ws2_32.dll", "recv", hook_recv))
 Each hooked function adds minimal overhead:
 - **Trampoline jump:** ~2-5 CPU cycles
 - **Hook logic:** Varies by function (recv/send ~100-500 cycles with retries)
-- **Logging:** Disabled in release builds for hot paths
+- **Logging:** Hot-path messages are rate-limited (once per 5 s per key), not removed
 
 ### Optimization Techniques
 
 1. **Selective hooking** - Only hook specific callers (server.dll)
 2. **Static variables** - Cache module addresses to avoid repeated lookups
 3. **Fast path** - Immediate return for normal cases (no retry needed)
-4. **Thread-local storage** - Avoid lock contention in hot paths
+4. **Idempotent socket options** - `getsockopt` before `setsockopt` skips the
+   syscall on already-configured sockets (see `maybe_set_nodelay`)
 
 ### Memory Footprint
 
