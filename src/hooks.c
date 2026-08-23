@@ -114,15 +114,18 @@ static BOOL g_HooksInitialized = false;
 // pass through with the game's original semantics: this is the A/B baseline.
 static BOOL g_fix_active = true;
 #ifdef NETWORKFIX_TEST
-/* Test build: state visible so tests can assert the fallback contract. */
-DWORD   g_server_rva = 0;
-HMODULE g_hServerDll = NULL;
+/* Test build: state visible so tests can assert the fallback contract and
+ * drive the PE import-table walk directly. */
+DWORD            g_server_rva = 0;
+HMODULE          g_hServerDll = NULL;
+size_t           g_server_size = 0;
+static uintptr_t g_server_base = 0;
 #else
-static DWORD   g_server_rva = 0;
-static HMODULE g_hServerDll = NULL;
-#endif
+static DWORD     g_server_rva = 0;
+static HMODULE   g_hServerDll = NULL;
 static uintptr_t g_server_base = 0;
 static size_t    g_server_size = 0;
+#endif
 
 // Original function pointers
 HOOK_STATIC int(WSAAPI *real_recv)(SOCKET, char *, int, int) = NULL;
@@ -965,11 +968,31 @@ static VOID WINAPI       hook_server_sleep(DWORD ms)
     real_server_sleep(ms);
 }
 
+/* Bounded compare of a string embedded in the mapped PE image against a
+ * literal. Import-table strings are untrusted bytes: a corrupt image may omit
+ * the NUL terminator, and strcmp/_stricmp would chase it past the end of the
+ * mapping. This requires the whole literal plus its terminator to lie inside
+ * the module before any byte is compared, so no read can leave the image. */
+static BOOL pe_str_eq(const BYTE *base, size_t size, const char *str, const char *literal,
+                      BOOL ignore_case)
+{
+    size_t str_off = (size_t)((const BYTE *)str - base);
+    if (str_off >= size)
+        return FALSE;
+    size_t literal_len = strlen(literal);
+    /* Strictly greater: the NUL terminator must fit inside the module too. */
+    if (size - str_off <= literal_len)
+        return FALSE;
+    int cmp =
+        ignore_case ? _strnicmp(str, literal, literal_len) : memcmp(str, literal, literal_len);
+    return cmp == 0 && str[literal_len] == '\0';
+}
+
 /* Walks server.dll's import table and returns the IAT slot for KERNEL32!Sleep,
  * or NULL when the import is absent or any table bound is inconsistent. Every
  * dereference is bounds-checked against the mapped image so a corrupt or
  * hand-crafted PE can never send this walk outside the module. */
-static IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
+HOOK_STATIC IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
 {
     const BYTE             *base = (const BYTE *)g_hServerDll;
     const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)base;
@@ -995,7 +1018,7 @@ static IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
         if ((size_t)imp->Name >= g_server_size)
             continue;
         const char *dllName = (const char *)(base + imp->Name);
-        if (_stricmp(dllName, "KERNEL32.dll") != 0)
+        if (!pe_str_eq(base, g_server_size, dllName, "KERNEL32.dll", TRUE))
             continue;
         if (imp->OriginalFirstThunk == 0 || imp->FirstThunk == 0)
             continue;
@@ -1021,7 +1044,7 @@ static IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
                 continue;
             const IMAGE_IMPORT_BY_NAME *ibn =
                 (const IMAGE_IMPORT_BY_NAME *)(base + nameThunk->u1.AddressOfData);
-            if (strcmp((const char *)ibn->Name, "Sleep") == 0)
+            if (pe_str_eq(base, g_server_size, (const char *)ibn->Name, "Sleep", FALSE))
             {
                 return iatThunk;
             }
