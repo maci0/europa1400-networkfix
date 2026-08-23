@@ -832,6 +832,24 @@ static void test_path_is_within_dir_requires_separator(void)
     CHECK(path_is_within_dir("C:\\Guild\\x.dll", NULL) == FALSE, "NULL dir should not match");
 }
 
+/* An empty value (quoted or bare) counts as absent so callers fall back to
+ * the documented default location instead of trying to load an empty path. */
+static void test_ini_empty_quoted_value_returns_null(void)
+{
+    check_ini_value("[Network]\r\nServerPath=\"\"\r\n", NULL);
+}
+
+static void test_ini_empty_legacy_key_returns_null(void)
+{
+    check_ini_value("[Network]\r\nServer=\r\n", NULL);
+}
+
+/* Empty ServerPath must still let the legacy Server key win. */
+static void test_ini_empty_serverpath_falls_back_to_server_key(void)
+{
+    check_ini_value("[Network]\r\nServerPath=\"\"\r\nServer=legacy\\server.dll\r\n", "legacy\\server.dll");
+}
+
 /* ---- Real server.dll fixture tests ---- */
 
 /* Looks up a hash in known_versions[]. Returns matching entry or NULL. */
@@ -956,6 +974,86 @@ static void test_pattern_matcher_does_not_match_unrelated_dll(void)
     /* Do NOT FreeLibrary(ntdll): handle is shared system-wide. */
 }
 
+/* Copies a real server*.dll fixture from the cwd to <exe dir>\Server\server.dll
+ * so the documented default location resolves there. Returns FALSE (skip) when
+ * no fixture is present or staging fails. */
+static BOOL stage_default_server_copy(char *out_copy_path, size_t out_size)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE           hf = FindFirstFileW(L"server*.dll", &fd);
+    if (hf == INVALID_HANDLE_VALUE)
+        return FALSE;
+    wchar_t fixture_name[MAX_PATH];
+    wcsncpy(fixture_name, fd.cFileName, MAX_PATH - 1);
+    fixture_name[MAX_PATH - 1] = L'\0';
+    FindClose(hf);
+
+    char exe_path[MAX_PATH];
+    if (GetModuleFileNameA(NULL, exe_path, sizeof(exe_path)) == 0)
+        return FALSE;
+    char *sep = strrchr(exe_path, '\\');
+    if (!sep)
+        sep = strrchr(exe_path, '/');
+    if (!sep)
+        return FALSE;
+    *(sep + 1) = '\0';
+
+    char server_dir[MAX_PATH];
+    int  n = snprintf(server_dir, sizeof(server_dir), "%sServer", exe_path);
+    if (n < 0 || (size_t)n >= sizeof(server_dir))
+        return FALSE;
+    CreateDirectoryA(server_dir, NULL); /* ok when it already exists */
+
+    n = snprintf(out_copy_path, out_size, "%s\\server.dll", server_dir);
+    if (n < 0 || (size_t)n >= out_size)
+        return FALSE;
+
+    wchar_t copy_w[MAX_PATH];
+    MultiByteToWideChar(CP_ACP, 0, out_copy_path, -1, copy_w, MAX_PATH);
+    return CopyFileW(fixture_name, copy_w, FALSE) != 0;
+}
+
+/* Documented contract (docs/configuration.md): an unusable configured
+ * ServerPath (here: absolute, rejected by is_safe_server_path) must fall back
+ * to the default Server\server.dll location next to the module instead of
+ * failing initialization. */
+static void test_init_server_module_falls_back_to_default(void)
+{
+    char copy_path[MAX_PATH];
+    if (!stage_default_server_copy(copy_path, sizeof(copy_path)))
+    {
+        printf("  SKIP (no server*.dll fixtures)\n");
+        return;
+    }
+
+    char ini_contents[MAX_PATH + 64];
+    snprintf(ini_contents, sizeof(ini_contents), "[Network]\r\nServerPath=\"%s\"\r\n", copy_path);
+    char ini_path[MAX_PATH];
+    CHECK(write_ini_next_to_exe(ini_contents, ini_path, sizeof(ini_path)) == TRUE, "could not write game.ini");
+
+    HMODULE saved_module = g_hModule;
+    g_hModule = GetModuleHandleA(NULL);
+
+    CHECK(init_server_module() == TRUE, "init_server_module should succeed via default-path fallback");
+    CHECK(g_hServerDll != NULL, "expected server module loaded after fallback");
+    CHECK(g_server_rva != 0, "expected nonzero RVA after fallback");
+
+    reset_server_globals();
+    g_hModule = saved_module;
+    CHECK(g_hServerDll == NULL && g_server_rva == 0, "expected globals reset");
+
+    DeleteFileA(ini_path);
+    DeleteFileA(copy_path);
+    char *sep = strrchr(copy_path, '\\');
+    if (!sep)
+        sep = strrchr(copy_path, '/');
+    if (sep)
+    {
+        *sep = '\0';
+        RemoveDirectoryA(copy_path); /* remove the staged Server dir */
+    }
+}
+
 int main(void)
 {
     WSADATA wsa;
@@ -1005,6 +1103,7 @@ int main(void)
     RUN(test_sha256_undersized_buffer_returns_false);
     RUN(test_real_server_dll_fixtures);
     RUN(test_pattern_matcher_does_not_match_unrelated_dll);
+    RUN(test_init_server_module_falls_back_to_default);
 
     RUN(test_ini_returns_unquoted_path);
     RUN(test_ini_strips_surrounding_quotes);
@@ -1012,6 +1111,9 @@ int main(void)
     RUN(test_ini_missing_file_returns_null);
     RUN(test_ini_null_module_returns_null);
     RUN(test_ini_prefers_serverpath_key);
+    RUN(test_ini_empty_quoted_value_returns_null);
+    RUN(test_ini_empty_legacy_key_returns_null);
+    RUN(test_ini_empty_serverpath_falls_back_to_server_key);
     RUN(test_is_safe_server_path_rejects_absolute_and_traversal);
     RUN(test_path_is_within_dir_requires_separator);
 

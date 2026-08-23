@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `hooks.c`: honor the documented `game.ini` `ServerPath` fallback: a missing,
+  unsafe, or unloadable configured path now retries `Server\server.dll` instead
+  of aborting initialization (docs/configuration.md "Default behavior" and
+  Example 3). An empty value (`ServerPath=""` / bare) counts as absent and no
+  longer shadows the legacy `Server` key. End-to-end Wine test pins the
+  fallback against a real server.dll fixture.
+- `docs/configuration.md`: `NETWORKFIX_DISABLE` row claimed it keeps
+  "TCP_NODELAY injection setup" alive; the code skips NODELAY when the fix is
+  disabled (as its own table row already said). Row now matches behavior.
+
+### Changed
+
 - `hooks.c`: require a directory separator in the game-dir containment check
   so `C:\Guild` no longer matches `C:\GuildExtra\…`; restore the
   `server.dll` Sleep IAT on unload and on `MH_EnableHook` failure; bound the

@@ -371,7 +371,7 @@ length-1 `"1"` as true.
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `NETWORKFIX_DISABLE` | off | A/B baseline: hooks stay installed but `recv`/`send`/`srv_gameStreamReader` pass through with original game semantics. Does **not** disable fastsync, TCP_NODELAY injection setup, or the evt guard. |
+| `NETWORKFIX_DISABLE` | off | A/B baseline: hooks stay installed but `recv`/`send`/`srv_gameStreamReader` pass through with original game semantics. Does **not** disable fastsync, harness fault-injection/tracing (`HARNESS_TINY_BUFFERS`, `HARNESS_NET_TRACE`), or the evt guard. TCP_NODELAY **is** skipped (see `NETWORKFIX_NODELAY`). |
 | `NETWORKFIX_NODELAY` | on | Set `TCP_NODELAY` on each `server.dll` socket the first time it is seen. `=0` keeps Nagle. Skipped when the fix is disabled. |
 | `NETWORKFIX_FASTSYNC` | on | Patch `server.dll`'s KERNEL32 `Sleep` IAT and clamp `Sleep(30)` to 1 ms. `=0` leaves the original 30 ms pump throttle. Independent of `NETWORKFIX_DISABLE`. |
 | `HARNESS_EVT_GUARD` | off (on in compose) | Signature-checked NULL guard on the game exe evt poll at `0x429800`. Harness-only. |
