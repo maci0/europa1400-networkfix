@@ -2,11 +2,6 @@
 """Lightweight frame checker: hashes screenshots to detect blank/black/unchanged."""
 import sys, hashlib
 from pathlib import Path
-try:
-    from PIL import Image
-    HAS_PIL=True
-except ImportError:
-    HAS_PIL=False
 
 def blank_or_black(p):
     try:

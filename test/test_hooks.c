@@ -639,49 +639,44 @@ static BOOL write_ini_next_to_exe(const char *contents, char *out_path, size_t o
     return ok;
 }
 
-static void test_ini_returns_unquoted_path(void)
+/* Writes `contents` as game.ini next to the running .exe, reads the server
+ * path back through get_server_path_from_ini(), and compares against
+ * `expected` (NULL expects a NULL return). Deletes the ini afterwards. */
+static void check_ini_value(const char *contents, const char *expected)
 {
     char ini_path[MAX_PATH];
-    CHECK(write_ini_next_to_exe("[Network]\r\nServer=foo\\bar\\server.dll\r\n", ini_path, sizeof(ini_path)) == TRUE,
-          "could not write game.ini");
+    CHECK(write_ini_next_to_exe(contents, ini_path, sizeof(ini_path)) == TRUE, "could not write game.ini");
 
     const char *p = get_server_path_from_ini(GetModuleHandleA(NULL));
-    CHECK(p != NULL, "expected non-NULL");
-    if (p)
+    if (expected)
     {
-        CHECK(strcmp(p, "foo\\bar\\server.dll") == 0, "got: %s", p);
+        CHECK(p != NULL, "expected non-NULL");
+        if (p)
+        {
+            CHECK(strcmp(p, expected) == 0, "got: %s", p);
+        }
+    }
+    else
+    {
+        CHECK(p == NULL, "expected NULL, got: %s", p ? p : "(null)");
     }
 
     DeleteFileA(ini_path);
+}
+
+static void test_ini_returns_unquoted_path(void)
+{
+    check_ini_value("[Network]\r\nServer=foo\\bar\\server.dll\r\n", "foo\\bar\\server.dll");
 }
 
 static void test_ini_strips_surrounding_quotes(void)
 {
-    char ini_path[MAX_PATH];
-    CHECK(write_ini_next_to_exe("[Network]\r\nServer=\"C:\\path with space\\server.dll\"\r\n", ini_path,
-                                sizeof(ini_path)) == TRUE,
-          "could not write game.ini");
-
-    const char *p = get_server_path_from_ini(GetModuleHandleA(NULL));
-    CHECK(p != NULL, "expected non-NULL");
-    if (p)
-    {
-        CHECK(strcmp(p, "C:\\path with space\\server.dll") == 0, "got: %s", p);
-    }
-
-    DeleteFileA(ini_path);
+    check_ini_value("[Network]\r\nServer=\"C:\\path with space\\server.dll\"\r\n", "C:\\path with space\\server.dll");
 }
 
 static void test_ini_missing_key_returns_null(void)
 {
-    char ini_path[MAX_PATH];
-    CHECK(write_ini_next_to_exe("[Other]\r\nKey=value\r\n", ini_path, sizeof(ini_path)) == TRUE,
-          "could not write game.ini");
-
-    const char *p = get_server_path_from_ini(GetModuleHandleA(NULL));
-    CHECK(p == NULL, "expected NULL, got: %s", p ? p : "(null)");
-
-    DeleteFileA(ini_path);
+    check_ini_value("[Other]\r\nKey=value\r\n", NULL);
 }
 
 static void test_ini_missing_file_returns_null(void)
@@ -712,19 +707,8 @@ static void test_ini_null_module_returns_null(void)
 
 static void test_ini_prefers_serverpath_key(void)
 {
-    char ini_path[MAX_PATH];
-    CHECK(write_ini_next_to_exe("[Network]\r\nServer=legacy\\server.dll\r\nServerPath=Server\\server.dll\r\n", ini_path,
-                                sizeof(ini_path)) == TRUE,
-          "could not write game.ini");
-
-    const char *p = get_server_path_from_ini(GetModuleHandleA(NULL));
-    CHECK(p != NULL, "expected non-NULL");
-    if (p)
-    {
-        CHECK(strcmp(p, "Server\\server.dll") == 0, "expected ServerPath to win, got: %s", p);
-    }
-
-    DeleteFileA(ini_path);
+    check_ini_value("[Network]\r\nServer=legacy\\server.dll\r\nServerPath=Server\\server.dll\r\n",
+                    "Server\\server.dll");
 }
 
 static void test_is_safe_server_path_rejects_absolute_and_traversal(void)
@@ -898,57 +882,33 @@ int main(void)
     RUN(test_srv_negative_return_is_zeroed);
     RUN(test_srv_clean_passes_through);
 
-    printf("[test] test_pattern_finds_exact_match\n");
-    test_pattern_finds_exact_match();
-    printf("[test] test_pattern_returns_minus_one_when_absent\n");
-    test_pattern_returns_minus_one_when_absent();
-    printf("[test] test_pattern_mask_ignores_wildcards\n");
-    test_pattern_mask_ignores_wildcards();
-    printf("[test] test_pattern_rejects_when_haystack_too_small\n");
-    test_pattern_rejects_when_haystack_too_small();
-    printf("[test] test_pattern_rejects_null_args\n");
-    test_pattern_rejects_null_args();
+    RUN(test_pattern_finds_exact_match);
+    RUN(test_pattern_returns_minus_one_when_absent);
+    RUN(test_pattern_mask_ignores_wildcards);
+    RUN(test_pattern_rejects_when_haystack_too_small);
+    RUN(test_pattern_rejects_null_args);
 
-    printf("[test] test_validate_accepts_in_bounds_prologue\n");
-    test_validate_accepts_in_bounds_prologue();
-    printf("[test] test_validate_rejects_missing_push_ecx\n");
-    test_validate_rejects_missing_push_ecx();
-    printf("[test] test_validate_rejects_jz_out_of_bounds\n");
-    test_validate_rejects_jz_out_of_bounds();
-    printf("[test] test_validate_rejects_jnz_out_of_bounds\n");
-    test_validate_rejects_jnz_out_of_bounds();
-    printf("[test] test_validate_rejects_when_too_close_to_end\n");
-    test_validate_rejects_when_too_close_to_end();
+    RUN(test_validate_accepts_in_bounds_prologue);
+    RUN(test_validate_rejects_missing_push_ecx);
+    RUN(test_validate_rejects_jz_out_of_bounds);
+    RUN(test_validate_rejects_jnz_out_of_bounds);
+    RUN(test_validate_rejects_when_too_close_to_end);
 
-    printf("[test] test_sha256_deterministic_and_collision_free_for_distinct_inputs\n");
-    test_sha256_deterministic_and_collision_free_for_distinct_inputs();
-    printf("[test] test_sha256_empty_file\n");
-    test_sha256_empty_file();
-    printf("[test] test_sha256_missing_file_returns_false\n");
-    test_sha256_missing_file_returns_false();
-    printf("[test] test_sha256_undersized_buffer_returns_false\n");
-    test_sha256_undersized_buffer_returns_false();
-    printf("[test] test_real_server_dll_fixtures\n");
-    test_real_server_dll_fixtures();
-    printf("[test] test_pattern_matcher_does_not_match_unrelated_dll\n");
-    test_pattern_matcher_does_not_match_unrelated_dll();
+    RUN(test_sha256_deterministic_and_collision_free_for_distinct_inputs);
+    RUN(test_sha256_empty_file);
+    RUN(test_sha256_missing_file_returns_false);
+    RUN(test_sha256_undersized_buffer_returns_false);
+    RUN(test_real_server_dll_fixtures);
+    RUN(test_pattern_matcher_does_not_match_unrelated_dll);
 
-    printf("[test] test_ini_returns_unquoted_path\n");
-    test_ini_returns_unquoted_path();
-    printf("[test] test_ini_strips_surrounding_quotes\n");
-    test_ini_strips_surrounding_quotes();
-    printf("[test] test_ini_missing_key_returns_null\n");
-    test_ini_missing_key_returns_null();
-    printf("[test] test_ini_missing_file_returns_null\n");
-    test_ini_missing_file_returns_null();
-    printf("[test] test_ini_null_module_returns_null\n");
-    test_ini_null_module_returns_null();
-    printf("[test] test_ini_prefers_serverpath_key\n");
-    test_ini_prefers_serverpath_key();
-    printf("[test] test_is_safe_server_path_rejects_absolute_and_traversal\n");
-    test_is_safe_server_path_rejects_absolute_and_traversal();
-    printf("[test] test_path_is_within_dir_requires_separator\n");
-    test_path_is_within_dir_requires_separator();
+    RUN(test_ini_returns_unquoted_path);
+    RUN(test_ini_strips_surrounding_quotes);
+    RUN(test_ini_missing_key_returns_null);
+    RUN(test_ini_missing_file_returns_null);
+    RUN(test_ini_null_module_returns_null);
+    RUN(test_ini_prefers_serverpath_key);
+    RUN(test_is_safe_server_path_rejects_absolute_and_traversal);
+    RUN(test_path_is_within_dir_requires_separator);
 
     WSACleanup();
 
