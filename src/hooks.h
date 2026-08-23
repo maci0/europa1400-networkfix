@@ -23,8 +23,6 @@
 BOOL init_hooks(void);
 void cleanup_hooks(void);
 
-// Server module range detection
-BOOL is_caller_from_server(uintptr_t caller_addr);
 #ifdef NETWORKFIX_TEST
 extern BOOL g_test_force_caller_server;
 /* Internals exposed so the Wine test suite can drive them directly. */

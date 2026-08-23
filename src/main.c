@@ -77,16 +77,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
 
         // Create initialization thread to avoid DllMain deadlock issues
         g_hInitThread = CreateThread(NULL, 0, init_thread, NULL, 0, NULL);
-        if (g_hInitThread)
-        {
-            // Keep handle for join on detach; don't close here
-        }
-        else
+        if (!g_hInitThread)
         {
             log_msg("[HOOK] Failed to create initialization thread");
             close_logging();
             return FALSE;
         }
+        // Keep handle for join on detach; don't close here
         break;
 
     case DLL_PROCESS_DETACH:
