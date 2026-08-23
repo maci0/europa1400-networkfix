@@ -69,23 +69,12 @@ static BOOL env_opt_out(const char *name)
     return GetEnvironmentVariableA(name, value, sizeof(value)) == 1 && value[0] == '0';
 }
 
-/* Cap on the per-process one-shot socket tables below; once full, sockets are
- * left unrecorded so their option keeps being re-applied (idempotent). */
-#define SEEN_SOCKETS_MAX 64
-
-/* FALSE if `s` is already recorded in `seen`, else records it and returns
- * TRUE. Shared by maybe_set_nodelay/maybe_shrink_buffers apply-once logic. */
-static BOOL socket_first_seen(SOCKET s, SOCKET *seen, int *seen_count)
-{
-    for (int i = 0; i < *seen_count; i++)
-    {
-        if (seen[i] == s)
-            return FALSE;
-    }
-    if (*seen_count < SEEN_SOCKETS_MAX)
-        seen[(*seen_count)++] = s;
-    return TRUE;
-}
+/* Per-socket options below are (re-)applied idempotently instead of being
+ * remembered per handle: winsock recycles SOCKET values after closesocket,
+ * so a remember-once table keyed on the handle could suppress the option on
+ * a fresh connection that reused a recorded value (Nagle stays on -> the
+ * desync this fix targets returns silently). Re-applying per call keeps
+ * correctness across reconnects with no retained per-connection state. */
 
 #ifdef NETWORKFIX_TEST
 // Test build: real_recv/real_send are externally writable mocks.
@@ -559,11 +548,14 @@ static void maybe_set_nodelay(SOCKET s)
     if (enabled == 0)
         return;
 
-    static SOCKET seen[SEEN_SOCKETS_MAX];
-    static int    seen_n = 0;
-    if (!socket_first_seen(s, seen, &seen_n))
-        return;
+    /* Check the live value instead of remembering handles (see note above the
+     * env toggles): a recycled handle starts with Nagle on and gets fixed
+     * here, while an already-configured socket costs one cheap getsockopt. */
     int one = 1;
+    int cur = 0;
+    int cbcur = sizeof(cur);
+    if (getsockopt(s, IPPROTO_TCP, TCP_NODELAY, (char *)&cur, &cbcur) == 0 && cur == one)
+        return; // already enabled on this socket handle
     if (setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof(one)) == 0)
         logf("[NODELAY] socket=%u TCP_NODELAY enabled (Nagle off)", (unsigned)s);
     else
@@ -587,14 +579,12 @@ static void maybe_shrink_buffers(SOCKET s)
     if (tiny == 0)
         return;
 
-    static SOCKET seen[SEEN_SOCKETS_MAX];
-    static int    seen_n = 0;
-    if (!socket_first_seen(s, seen, &seen_n))
-        return;
+    /* Idempotent re-apply per call, no handle-keyed memory (see the note
+     * above maybe_set_nodelay); log rate limited to match. */
     int val = tiny;
     setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char *)&val, sizeof(val));
     setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&val, sizeof(val));
-    logf("[TINY BUF] socket=%u SO_SNDBUF/SO_RCVBUF set to %d bytes", (unsigned)s, val);
+    logf_rate_limited("tiny_buf", "[TINY BUF] socket=%u SO_SNDBUF/SO_RCVBUF set to %d bytes", (unsigned)s, val);
 }
 
 /* Harness-only payload tracing (HARNESS_NET_TRACE=1): hex-dump the first bytes

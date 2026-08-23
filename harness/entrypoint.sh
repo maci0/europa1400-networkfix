@@ -117,8 +117,12 @@ if command -v ffmpeg >/dev/null 2>&1; then
   ffmpeg -y -video_size 1152x864 -framerate 10 -draw_mouse 0 -f x11grab -i "$DISPLAY" -vcodec libx264 -pix_fmt yuv420p -preset ultrafast -movflags +faststart "$LOG_DIR/record.mp4" >"$LOG_DIR/ffmpeg.log" 2>&1 &
   FFMPEG_PID=$!
 fi
-# periodic screenshots
-( while true; do sleep 5; import -window root "$LOG_DIR/screenshot_$(date +%s).png" 2>/dev/null || true; done ) &
+# periodic screenshots, pruned to the newest MAX_SCREENSHOTS so multi-day
+# endurance runs cannot fill the disk with 5-second frames
+MAX_SCREENSHOTS=240
+( while true; do sleep 5; import -window root "$LOG_DIR/screenshot_$(date +%s).png" 2>/dev/null || true
+    ls -1t "$LOG_DIR"/screenshot_*.png 2>/dev/null | tail -n +$((MAX_SCREENSHOTS + 1)) | xargs -r rm -f || true
+done ) &
 SCREENSHOT_PID=$!
 
 trap 'for _pid in ${FFMPEG_PID:-} ${SCREENSHOT_PID:-}; do kill "$_pid" 2>/dev/null || true; done; sleep 1; exit 0' TERM INT
