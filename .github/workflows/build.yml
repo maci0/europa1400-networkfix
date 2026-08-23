@@ -119,6 +119,6 @@ jobs:
 
       - name: Attest build provenance (on tag v*)
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: bin/networkfix.asi

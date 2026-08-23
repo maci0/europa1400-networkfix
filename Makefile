@@ -114,7 +114,7 @@ install: $(TARGET)
 
 sbom:
 	@mkdir -p $(DIST_DIR)
-	@echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"metadata":{"component":{"name":"europa1400-networkfix","version":"$(VERSION)","type":"application"}},"components":[{"name":"minhook","version":"$(MINHOOK_VERSION)","type":"library","purl":"pkg:github/TsudaKageyu/minhook@v$(MINHOOK_VERSION)"},{"name":"zig","version":"$(ZIG_VERSION_EXPECTED)","type":"application"}]}' > $(DIST_DIR)/sbom.json
+	@echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"metadata":{"component":{"name":"europa1400-networkfix","version":"$(VERSION)","type":"application"}},"components":[{"name":"minhook","version":"$(MINHOOK_VERSION)","type":"library","purl":"pkg:github/TsudaKageyu/minhook@v$(MINHOOK_VERSION)","licenses":[{"license":{"id":"BSD-2-Clause"}}]},{"name":"zig","version":"$(ZIG_VERSION_EXPECTED)","type":"application"}]}' > $(DIST_DIR)/sbom.json
 	@echo "sbom: $(DIST_DIR)/sbom.json"
 
 dist: check-zig $(TARGET) sbom
