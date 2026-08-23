@@ -114,7 +114,26 @@ void log_msg(const char *fmt, ...)
         }
 
         DWORD written;
-        WriteFile(g_logctx.log_file, buffer, timestamp_len + len, &written, NULL);
+        DWORD to_write = (DWORD)(timestamp_len + len);
+        if (!WriteFile(g_logctx.log_file, buffer, to_write, &written, NULL) || written != to_write)
+        {
+            /* A failed or short write means every later message is lost with
+             * no trace (disk full, handle invalidated). Announce once on the
+             * debug channel so the loss is at least visible; never spam and
+             * never recurse into log_msg from inside its own lock. */
+            static bool write_failure_reported = false;
+            if (!write_failure_reported)
+            {
+                write_failure_reported = true;
+                char ods[128];
+                int  n = snprintf(ods, sizeof(ods),
+                                  "[HOOK] log write failed/short (%lu of %lu, error %lu); "
+                                  "further log lines may be lost\n",
+                                  (unsigned long)written, (unsigned long)to_write, GetLastError());
+                if (n > 0)
+                    OutputDebugStringA(ods);
+            }
+        }
         // Removed FlushFileBuffers for better performance
         // FlushFileBuffers(g_logctx.log_file);
     }
@@ -128,7 +147,24 @@ static char *GetErrorDescription(int errorCode)
         FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         NULL, errorCode, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buffer, 0, NULL);
 
-    // Returns NULL if FormatMessageA fails - caller handles this case
+    // cppcheck-suppress knownConditionTrueFalse
+    // False positive: FORMAT_MESSAGE_ALLOCATE_BUFFER writes through &buffer,
+    // which cppcheck cannot model; it assumes buffer stays NULL.
+    if (buffer)
+    {
+        // FormatMessageA appends "\r\n"; trim it so one log entry stays one
+        // line (log_msg would otherwise only append its newline conditionally).
+        size_t len = strlen(buffer);
+        while (len > 0 && (buffer[len - 1] == '\n' || buffer[len - 1] == '\r'))
+            buffer[--len] = '\0';
+        if (len == 0)
+        {
+            LocalFree(buffer);
+            buffer = NULL;
+        }
+    }
+
+    // Returns NULL if FormatMessageA fails or yields only whitespace - caller handles this case
     return buffer;
 }
 
@@ -173,16 +209,30 @@ void log_socket_buffer_info(SOCKET s)
         return;
 
     // Get socket buffer sizes (outside lock — slow syscall)
-    int recv_buf_size = -1;
-    int send_buf_size = -1;
-    int opt_len = sizeof(int);
+    int  recv_buf_size = -1;
+    int  send_buf_size = -1;
+    int  opt_len = sizeof(int);
 
-    getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&recv_buf_size, &opt_len);
+    BOOL recv_ok = getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&recv_buf_size, &opt_len) == 0;
+    int  recv_err = WSAGetLastError(); // capture before the next call overwrites it
     opt_len = sizeof(int);
-    getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&send_buf_size, &opt_len);
+    BOOL send_ok = getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&send_buf_size, &opt_len) == 0;
+    int  send_err = WSAGetLastError();
 
-    log_msg("[WS2 HOOK] Socket %u: recv_buf=%d, send_buf=%d", (unsigned)s, recv_buf_size,
-            send_buf_size);
+    if (recv_ok && send_ok)
+    {
+        log_msg("[WS2 HOOK] Socket %u: recv_buf=%d, send_buf=%d", (unsigned)s, recv_buf_size,
+                send_buf_size);
+    }
+    else
+    {
+        /* A failed probe must not read like real buffer sizes (-1): report
+         * which query failed and why so the socket state stays debuggable. */
+        if (!recv_ok)
+            log_winsock_error("[WS2 HOOK] Socket buffer probe (SO_RCVBUF)", s, recv_err);
+        if (!send_ok)
+            log_winsock_error("[WS2 HOOK] Socket buffer probe (SO_SNDBUF)", s, send_err);
+    }
 }
 
 bool init_logging(HMODULE hModule)

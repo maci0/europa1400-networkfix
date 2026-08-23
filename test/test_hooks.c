@@ -165,6 +165,8 @@ static int WSAAPI  mock_send(SOCKET s, const char *buf, int len, int flags)
 }
 
 /* ---- Helpers ---- */
+static void reset_state(void);
+static void open_null_log_once(void); /* defined with the rate-gate tests below */
 static void reset_state(void)
 {
     memset(&g_recv_script, 0, sizeof(g_recv_script));
@@ -227,6 +229,26 @@ static void test_recv_passes_data_through(void)
 
     CHECK(r == 5, "expected 5 bytes, got %d", r);
     CHECK(memcmp(buf, "hello", 5) == 0, "buffer contents wrong");
+}
+
+/* recv: graceful close (real_recv == 0) must pass through unchanged on every
+ * call. The close *report* is rate-limited (a polled dead socket would flood
+ * and roll over the log), but the data path itself never changes shape.
+ * Note: the diagnostic getsockopt probes may clobber the thread's winsock
+ * last error (pre-existing); callers of recv() only consult it on -1. */
+static void test_recv_graceful_close_passthrough_repeated(void)
+{
+    open_null_log_once();
+    g_recv_script.return_value = 0;
+
+    char buf[64];
+    for (int i = 0; i < 3; i++)
+    {
+        int r = hook_recv((SOCKET)1, buf, sizeof(buf), 0);
+        CHECK(r == 0, "call %d: expected 0 passthrough, got %d", i, r);
+    }
+    CHECK(g_recv_script.call_count == 3, "expected 3 real_recv calls, got %d",
+          g_recv_script.call_count);
 }
 
 /* recv: non-wouldblock errors propagate unchanged. */
@@ -1293,6 +1315,7 @@ int main(void)
 
     RUN(test_recv_wouldblock_returns_zero);
     RUN(test_recv_passes_data_through);
+    RUN(test_recv_graceful_close_passthrough_repeated);
     RUN(test_recv_propagates_other_errors);
     RUN(test_send_retries_then_succeeds);
     RUN(test_send_handles_partial_sends);
