@@ -98,12 +98,24 @@ void log_msg(const char *fmt, ...)
 
     if (len > 0)
     {
-        // Check if we need to add newline and have space for it
+        // Ensure the record always ends its own line, even when the message
+        // filled the buffer exactly: there the NUL sits on the final byte and
+        // must give way to the newline (WriteFile needs no terminator).
         int total_len = timestamp_len + len;
-        if (buffer[total_len - 1] != '\n' && total_len < (int)sizeof(buffer) - 1)
+        if (buffer[total_len - 1] != '\n')
         {
-            buffer[total_len] = '\n';
-            buffer[total_len + 1] = '\0';
+            if (total_len < (int)sizeof(buffer) - 1)
+            {
+                buffer[total_len] = '\n';
+                buffer[total_len + 1] = '\0';
+            }
+            else
+            {
+                /* Exact-fit truncation: the NUL sits on the final byte; swap
+                 * it for the newline so this record cannot merge with the
+                 * next one in the file. */
+                buffer[total_len] = '\n';
+            }
             len++;
         }
 
