@@ -109,16 +109,6 @@ If you want to understand the problem and solution:
 **...report a bug**
 → [GitHub Issues](https://github.com/maci0/europa1400-networkfix/issues)
 
-## Documentation Standards
-
-This documentation follows these principles:
-
-1. **User-focused** - Written for the intended audience
-2. **Example-driven** - Concrete examples over abstract descriptions
-3. **Navigable** - Clear cross-references and table of contents
-4. **Maintainable** - Kept in sync with code via file path references
-5. **Comprehensive** - Covers all aspects from user to developer
-
 ## Contributing to Documentation
 
 Documentation improvements are welcome! Please:

@@ -534,7 +534,8 @@ so the test binary never opens `hook_log.txt`.
 1. Add a `static void test_xxx(void)` function in `test/test_hooks.c`.
 2. Use `CHECK(cond, "msg %d", arg)` for assertions; failures bump `g_failures`
    without aborting, so all tests run every invocation.
-3. Add a `printf("[test] test_xxx\n"); test_xxx();` line to `main()`.
+3. Register it in `main()` with `RUN(test_xxx);` (prints the test name and
+   resets the mock state).
 4. Run `make test`.
 
 ### Testing on Different Versions

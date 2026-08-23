@@ -559,7 +559,6 @@ static void trace_payload(const char *dir, const char *buf, int len)
  */
 int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
 {
-    // Check if caller is from server.dll
     if (!is_caller_from_server((uintptr_t)CALLER_IP()))
     {
         return real_recv(s, buf, len, flags);
@@ -635,7 +634,6 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
  */
 int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 {
-    // Check if caller is from server.dll
     if (!is_caller_from_server((uintptr_t)CALLER_IP()))
     {
         return real_send(s, buf, len, flags);
