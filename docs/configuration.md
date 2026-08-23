@@ -91,7 +91,7 @@ These constants are defined in source files and require recompilation to change.
 
 ### Network Retry Settings
 
-Defined in [src/hooks.c:42-43](../src/hooks.c#L42-L43):
+Defined in [src/hooks.h:14-15](../src/hooks.h#L14-L15) (shared with the test suite):
 
 ```c
 #define SEND_MAX_RETRIES 5000 // ~5s at 1ms delay before WSAETIMEDOUT
@@ -117,7 +117,7 @@ Defined in [src/hooks.c:42-43](../src/hooks.c#L42-L43):
   - `0` - No delay, maximum retry rate
 
 **To change:**
-1. Edit [src/hooks.c](../src/hooks.c)
+1. Edit [src/hooks.h](../src/hooks.h)
 2. Modify the `#define` values
 3. Rebuild: `make clean && make`
 
@@ -135,7 +135,7 @@ Defined in [src/hooks.c:42-43](../src/hooks.c#L42-L43):
 
 ### Default Server Path
 
-Defined in [src/hooks.c:37](../src/hooks.c#L37):
+Defined in [src/hooks.c:38](../src/hooks.c#L38):
 
 ```c
 #define DEFAULT_SERVER_PATH "Server\\server.dll"
@@ -207,8 +207,14 @@ Currently, there are no runtime log levels. All log messages are written.
 - `[HOOK]` - Initialization and lifecycle
 - `[WS2 HOOK]` - Winsock function calls
 - `[SERVER HOOK]` - Server.dll function calls
+- `[CONFIG]` - game.ini parsing
 - `[PATTERN]` - Pattern matching details
-- `[ERROR]` - Error conditions
+- `[SHA256]` - File hashing (version detection)
+- `[NODELAY]` - TCP_NODELAY application
+- `[FASTSYNC]` - server.dll Sleep IAT patch
+- `[TINY BUF]` - Harness fault injection (HARNESS_TINY_BUFFERS)
+- `[NET TRACE]` - Harness payload tracing (HARNESS_NET_TRACE)
+- `[EVT GUARD]` - Harness evt-poll NULL guard (HARNESS_EVT_GUARD)
 
 ### Rate-Limited Logging
 
@@ -227,7 +233,7 @@ Defined in [src/logging.h:17](../src/logging.h#L17):
 log_msg_rate_limited("recv_error", "[WS2 HOOK] recv error: %d", error);
 ```
 
-Only logs once per 5 seconds even if called thousands of times (see `src/logging.c:215-273`).
+Only logs once per 5 seconds even if called thousands of times (see `log_msg_rate_limited` in `src/logging.c`).
 
 ## Network Behavior Tuning
 
@@ -349,8 +355,9 @@ To add support for a new game version:
 
 3. **Add to [src/versions.c](../src/versions.c):**
    ```c
-   // In src/versions.c known_versions[]:
-   {"My Version", "abcdef1234567890...", 0x4000},
+   // In src/versions.c known_versions[] — field order is
+   // {sha256_hash, target_rva, version_name} (see server_version_info_t):
+   {"abcdef1234567890...", 0x4000, "My Version"},
    ```
    Definition is in `src/versions.c`; `src/versions.h` only declares `extern const server_version_info_t known_versions[]`.
 
@@ -366,8 +373,9 @@ See [server-dll-versions.md](server-dll-versions.md) for detailed version docume
 ## Environment Variables
 
 All flags are read once at init (or first use) via `GetEnvironmentVariableA`.
-A value of `"1"` / `"0"` must be a single character — `env_flag` only treats
-length-1 `"1"` as true.
+Enable flags (`NETWORKFIX_DISABLE`, `HARNESS_*`) are parsed with `atoi`, so any
+value that parses to `1` counts (`"1"`, `"01"`, `" 1"`); opt-out switches
+(`NETWORKFIX_NODELAY`, `NETWORKFIX_FASTSYNC`) disable only on an exact `"0"`.
 
 | Variable | Default | Effect |
 |----------|---------|--------|
