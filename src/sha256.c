@@ -86,8 +86,8 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
         // Need 2 chars per byte + terminator
         if (output_size < (size_t)hashSize * 2 + 1)
         {
-            log_msg("[SHA256] Output buffer too small (%zu bytes, need %lu)", output_size,
-                    (unsigned long)hashSize * 2 + 1);
+            log_msg("[SHA256] Hash aborted: output buffer too small (%zu bytes, need %lu)",
+                    output_size, (unsigned long)hashSize * 2 + 1);
         }
         else
         {

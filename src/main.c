@@ -96,7 +96,16 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
         {
             if (lpReserved == NULL)
             {
-                WaitForSingleObject(g_hInitThread, 10000);
+                DWORD wait = WaitForSingleObject(g_hInitThread, 10000);
+                if (wait != WAIT_OBJECT_0)
+                {
+                    // The init thread may still be mid-initialization while we
+                    // tear hooks down below; leave a trace instead of failing
+                    // silently (WAIT_TIMEOUT = 0x102, WAIT_FAILED = 0xFFFFFFFF).
+                    log_msg("[HOOK] Init thread join incomplete (wait result 0x%lX); "
+                            "continuing cleanup",
+                            (unsigned long)wait);
+                }
             }
             CloseHandle(g_hInitThread);
             g_hInitThread = NULL;

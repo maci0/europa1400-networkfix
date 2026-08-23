@@ -31,6 +31,17 @@ typedef enum
  */
 PATTERN_MATCH_RESULT find_srv_gameStreamReader_by_pattern(HMODULE module_handle, DWORD *found_rva);
 
+#ifdef NETWORKFIX_TEST
+/* Internals exposed so the Wine test suite can drive them directly. */
+long                 find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size,
+                                            const unsigned char *needle, const unsigned char *mask,
+                                            size_t needle_size);
+BOOL                 validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset,
+                                                size_t module_size);
+PATTERN_MATCH_RESULT find_first_valid_match(const unsigned char *base_addr, size_t module_size,
+                                            DWORD *found_rva);
+#endif
+
 /**
  * Converts a pattern match result to a human-readable string.
  *

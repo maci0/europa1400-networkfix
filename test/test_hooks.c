@@ -14,6 +14,7 @@
 #include "hooks.h"
 #include "logging.h"
 #include "pattern_matcher.h"
+#include "sha256.h"
 #include "versions.h"
 #include <psapi.h>
 #include <stddef.h>
@@ -23,26 +24,9 @@
 #include <windows.h>
 #include <winsock2.h>
 
-/* hooks.c globals exposed under NETWORKFIX_TEST */
-extern int(WSAAPI *real_recv)(SOCKET, char *, int, int);
-extern int(WSAAPI *real_send)(SOCKET, const char *, int, int);
-
-typedef int(__cdecl *srv_gameStreamReader_t)(int *ctx, int received, int totalLen);
-extern srv_gameStreamReader_t real_srv_gameStreamReader;
-int __cdecl                   hook_srv_gameStreamReader(int *ctx, int received, int totalLen);
-
-/* pattern_matcher.c internals exposed under NETWORKFIX_TEST */
-long                 find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size,
-                                            const unsigned char *needle, const unsigned char *mask,
-                                            size_t needle_size);
-BOOL                 validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset,
-                                                size_t module_size);
-PATTERN_MATCH_RESULT find_first_valid_match(const unsigned char *base_addr, size_t module_size,
-                                            DWORD *found_rva);
-/* hooks.c PE import walk, exposed under NETWORKFIX_TEST */
-IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void);
-/* sha256.c public API */
-BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t output_size);
+/* Test seams: hooks.h (NETWORKFIX_TEST block) declares the hooks.c globals
+ * and internals, pattern_matcher.h declares the pattern matcher internals;
+ * both are compiler-verified against the definitions. */
 
 /* main.c global referenced by hooks.c (get_server_path_from_ini). Tests never
  * touch that codepath, but the symbol must resolve at link time. */
@@ -1579,6 +1563,29 @@ static void test_log_msg_exact_fit_line_terminated(void)
     CHECK(read_len > 0 && contents[read_len - 1] == '\n', "the final record must end its own line");
 }
 
+/* ---- TOCTOU pre/post hash comparison ---- */
+
+/* The mismatch gate must compare pre against post (a self-comparison can
+ * never fire, which would silently disable the replacement detection). */
+static void test_server_hash_mismatch_compares_pre_and_post(void)
+{
+    const char h1[65] = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const char h2[65] = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    CHECK(server_hash_mismatch(h1, h1) == FALSE, "identical hashes must not mismatch");
+    CHECK(server_hash_mismatch(h1, h2) == TRUE, "differing hashes must report a mismatch");
+}
+
+/* An empty side means that hash is unavailable; absence cannot be evidence
+ * of tampering, so the gate stays open. */
+static void test_server_hash_mismatch_ignores_missing_hashes(void)
+{
+    const char h1[65] = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const char empty[65] = "";
+    CHECK(server_hash_mismatch(empty, h1) == FALSE, "missing pre-hash must not mismatch");
+    CHECK(server_hash_mismatch(h1, empty) == FALSE, "missing post-hash must not mismatch");
+    CHECK(server_hash_mismatch(empty, empty) == FALSE, "both hashes missing must not mismatch");
+}
+
 int main(void)
 {
     WSADATA wsa;
@@ -1636,6 +1643,8 @@ int main(void)
     RUN(test_real_server_dll_fixtures);
     RUN(test_pattern_matcher_does_not_match_unrelated_dll);
     RUN(test_init_server_module_falls_back_to_default);
+    RUN(test_server_hash_mismatch_compares_pre_and_post);
+    RUN(test_server_hash_mismatch_ignores_missing_hashes);
 
     RUN(test_ini_returns_unquoted_path);
     RUN(test_ini_strips_surrounding_quotes);

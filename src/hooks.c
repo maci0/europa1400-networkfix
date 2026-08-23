@@ -47,8 +47,11 @@
 /* Numeric value of an environment variable, 0 when unset or empty. */
 static int env_int(const char *name)
 {
-    char value[16] = {0};
-    if (GetEnvironmentVariableA(name, value, sizeof(value)) == 0)
+    char  value[16] = {0};
+    DWORD n = GetEnvironmentVariableA(name, value, sizeof(value));
+    /* n >= sizeof(value) means the value did not fit and the buffer contents
+     * were destroyed: treat it as unset instead of parsing arbitrary bytes. */
+    if (n == 0 || n >= sizeof(value))
         return 0;
     return atoi(value);
 }
@@ -128,8 +131,8 @@ static size_t    g_server_size = 0;
 HOOK_STATIC int(WSAAPI *real_recv)(SOCKET, char *, int, int) = NULL;
 HOOK_STATIC int(WSAAPI *real_send)(SOCKET, const char *, int, int) = NULL;
 
-/* Server.dll srv_gameStreamReader function - RVA varies by version */
-typedef int(__cdecl *srv_gameStreamReader_t)(int *ctx, int received, int totalLen);
+/* Server.dll srv_gameStreamReader target; srv_gameStreamReader_t and the
+ * per-version RVA lookup live in hooks.h / versions.c + pattern_matcher.c */
 HOOK_STATIC srv_gameStreamReader_t real_srv_gameStreamReader = NULL;
 
 /**
@@ -295,42 +298,58 @@ static BOOL load_server_dll(const char *serverPath)
 
     // Verify canonical path stays within game dir before loading
     char module_dir[MAX_PATH] = {0};
-    if (get_module_dir(g_hModule, module_dir))
+    if (!get_module_dir(g_hModule, module_dir))
     {
-        char combined[MAX_PATH] = {0};
-        char canonical[MAX_PATH] = {0};
-        char game_dir[MAX_PATH] = {0};
-        if (PathCombineA(combined, module_dir, serverPath) &&
-            GetFullPathNameA(combined, sizeof(canonical), canonical, NULL) != 0 &&
-            GetFullPathNameA(module_dir, sizeof(game_dir), game_dir, NULL) != 0)
+        // Module dir unavailable: best effort with the configured relative path
+        g_hServerDll = LoadLibraryA(serverPath);
+        if (!g_hServerDll)
         {
-            // Prefix match alone accepts C:\GuildExtra; require containment
-            if (!path_is_within_dir(canonical, game_dir))
-            {
-                log_msg("[HOOK] Rejected path outside game dir: %s -> %s", serverPath, canonical);
-                return FALSE;
-            }
-            log_msg("[HOOK] Canonical server path: %s", canonical);
-            g_hServerDll = LoadLibraryA(canonical);
-            if (!g_hServerDll)
-            {
-                log_msg("[HOOK] Failed to load server.dll (error: %lu)", GetLastError());
-                return FALSE;
-            }
-            log_msg("[HOOK] Server.dll loaded at %p", (void *)g_hServerDll);
-            return TRUE;
+            DWORD error = GetLastError();
+            log_msg("[HOOK] Failed to load server.dll (error: %lu)", error);
+            return FALSE;
         }
+        // No Sleep(100) — LoadLibrary is synchronous; original race comment not reproducible.
+        log_msg("[HOOK] Server.dll loaded at %p", (void *)g_hServerDll);
+        return TRUE;
     }
 
-    // Module dir unavailable: best effort with the configured relative path
-    g_hServerDll = LoadLibraryA(serverPath);
-    if (!g_hServerDll)
+    // Module dir is known from here on: a failed canonicalization must fail
+    // closed. Falling back to the raw relative path would skip the containment
+    // check below exactly when path resolution misbehaved.
+    char combined[MAX_PATH] = {0};
+    char canonical[MAX_PATH] = {0};
+    char game_dir[MAX_PATH] = {0};
+    if (!PathCombineA(combined, module_dir, serverPath))
     {
-        DWORD error = GetLastError();
-        log_msg("[HOOK] Failed to load server.dll (error: %lu)", error);
+        log_msg("[HOOK] Could not combine server path %s with game dir %s", serverPath, module_dir);
         return FALSE;
     }
-    // No Sleep(100) — LoadLibrary is synchronous; original race comment not reproducible.
+    if (GetFullPathNameA(combined, sizeof(canonical), canonical, NULL) == 0)
+    {
+        log_msg("[HOOK] Could not resolve canonical path for %s (error: %lu)", serverPath,
+                GetLastError());
+        return FALSE;
+    }
+    if (GetFullPathNameA(module_dir, sizeof(game_dir), game_dir, NULL) == 0)
+    {
+        log_msg("[HOOK] Could not resolve canonical game dir for %s (error: %lu)", module_dir,
+                GetLastError());
+        return FALSE;
+    }
+
+    // Prefix match alone accepts C:\GuildExtra; require containment
+    if (!path_is_within_dir(canonical, game_dir))
+    {
+        log_msg("[HOOK] Rejected path outside game dir: %s -> %s", serverPath, canonical);
+        return FALSE;
+    }
+    log_msg("[HOOK] Canonical server path: %s", canonical);
+    g_hServerDll = LoadLibraryA(canonical);
+    if (!g_hServerDll)
+    {
+        log_msg("[HOOK] Failed to load server.dll (error: %lu)", GetLastError());
+        return FALSE;
+    }
     log_msg("[HOOK] Server.dll loaded at %p", (void *)g_hServerDll);
     return TRUE;
 }
@@ -358,6 +377,16 @@ static BOOL preload_hash_server_file(const char *path, char out[65])
     }
     log_msg("[HOOK] Pre-load SHA256: %s", out);
     return TRUE;
+}
+
+/**
+ * True iff a pre-load hash was computed and differs from the post-load hash of
+ * the mapped module (TOCTOU replacement signal). An empty string means the
+ * respective hash is unavailable, which cannot constitute a mismatch.
+ */
+PATH_STATIC BOOL server_hash_mismatch(const char pre[65], const char post[65])
+{
+    return pre[0] != '\0' && post[0] != '\0' && strcmp(pre, post) != 0;
 }
 
 /**
@@ -417,8 +446,7 @@ PATH_STATIC BOOL init_server_module(void)
     }
 
     // Verify pre-hash matches post-load hash if we had one (detect TOCTOU replacement)
-    // (a computed SHA256 hex string is never empty, so preHash[0] marks presence)
-    if (preHash[0] && postHash[0] && strcmp(preHash, postHash) != 0)
+    if (server_hash_mismatch(preHash, postHash))
     {
         log_msg("[HOOK] Hash mismatch pre/post load: %s != %s — possible replacement, aborting",
                 preHash, postHash);
@@ -1332,8 +1360,8 @@ void cleanup_hooks(void)
     MH_STATUS disableStatus = MH_DisableHook(MH_ALL_HOOKS);
     MH_STATUS uninitStatus = MH_Uninitialize();
 
-    log_msg("[HOOK] Cleanup completed (Disable: %d, Uninit: %d)", (int)disableStatus,
-            (int)uninitStatus);
+    log_msg("[HOOK] Cleanup completed (Disable: %s, Uninit: %s)", MH_StatusToString(disableStatus),
+            MH_StatusToString(uninitStatus));
 
     // Restore the Sleep IAT before FreeLibrary so server.dll is left intact
     // if another module still holds a reference.

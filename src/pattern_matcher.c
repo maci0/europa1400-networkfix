@@ -18,16 +18,6 @@
 #define PATTERN_STATIC static
 #endif
 
-/* Forward prototypes satisfy -Wmissing-prototypes in the NETWORKFIX_TEST
- * build, where PATTERN_STATIC expands to empty and these become global. */
-PATTERN_STATIC long find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size,
-                                           const unsigned char *needle, const unsigned char *mask,
-                                           size_t needle_size);
-PATTERN_STATIC BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset,
-                                               size_t module_size);
-PATTERN_STATIC PATTERN_MATCH_RESULT find_first_valid_match(const unsigned char *base_addr,
-                                                           size_t module_size, DWORD *found_rva);
-
 // Pattern for srv_gameStreamReader function based on disassembly analysis
 // Common signature across Steam and GOG versions:
 static const unsigned char SRV_GAMESTREAMREADER_PATTERN[] = {
