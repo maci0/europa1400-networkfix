@@ -37,6 +37,9 @@ LDFLAGS := -lc -lws2_32 -lshlwapi -ladvapi32
 
 .PHONY: all clean install test build-test check-zig format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
 
+# README documents bare `make` as building the release target.
+.DEFAULT_GOAL := all
+
 check-zig:
 	@$(ZIG) version | grep -q "$(ZIG_VERSION_EXPECTED)" || \
 		(echo "ERROR: Zig $(ZIG_VERSION_EXPECTED) required, got $$( $(ZIG) version)" && exit 1)
