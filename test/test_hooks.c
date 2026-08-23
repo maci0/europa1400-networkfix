@@ -39,6 +39,11 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
  * touch that codepath, but the symbol must resolve at link time. */
 HMODULE g_hModule = NULL;
 
+/* Called from hooks.c under NETWORKFIX_TEST; prototypes here satisfy
+ * -Wmissing-prototypes. */
+void test_sleep(DWORD ms);
+void test_pump_messages(void);
+
 /* ---- Sleep counter (replaces Sleep() inside hook_send retry loop) ---- */
 static int g_sleep_calls = 0;
 void       test_sleep(DWORD ms)
