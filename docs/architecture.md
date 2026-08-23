@@ -272,6 +272,7 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
             {
                 // Buffer full, wait and retry
                 Sleep(SEND_RETRY_DELAY_MS);
+                pump_pending_messages();  // keep the loading dialog responsive
                 retry_count++;
                 continue;
             }
@@ -291,23 +292,26 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 
 **Impact:** Handles network buffer congestion gracefully with automatic retries.
 
-### GetTickCount() Hook - Consistent Timing
+### GetTickCount() Hook - Defensive Passthrough
 
 [src/hooks.c](../src/hooks.c) - `hook_GetTickCount()`
 
-**Problem:** Network latency variations cause timeout issues in game synchronization
+**Purpose:** No timing behavior is changed. The hook only guards against a NULL
+original pointer (failed hook setup), which would otherwise crash the game on
+call.
 
 **Solution:**
 ```c
 DWORD WINAPI hook_GetTickCount(void)
 {
-    // Pass through to original function
-    // Future: Could add time drift compensation if needed
-    return real_GetTickCount();
+    if (real_GetTickCount)
+        return real_GetTickCount();
+    log_msg("[SERVER HOOK] GetTickCount was NULL. Falling back to 0");
+    return 0;
 }
 ```
 
-**Current Status:** Passthrough implementation. Reserved for future timing adjustments if needed.
+**Current Status:** Passthrough with fallback. Reserved for future timing adjustments if needed.
 
 ### Server Function Hook - Packet Validation Fix
 
@@ -497,10 +501,9 @@ This is a false positive - the code is open source and can be audited.
 
 ### Planned Features
 
-1. **Automatic version detection** - Remove need for known SHA256 hashes
-2. **Configurable retry parameters** - Allow tuning via INI file
-3. **Network statistics** - Track packet loss, retries, latency
-4. **Hot-reload configuration** - Change settings without restart
+1. **Configurable retry parameters** - Allow tuning via INI file
+2. **Network statistics** - Track packet loss, retries, latency
+3. **Hot-reload configuration** - Change settings without restart
 
 ### Harness (xdotool + Lua)
 

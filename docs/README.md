@@ -45,7 +45,7 @@ If you want to understand the problem and solution:
   - [Testing results](problem-analysis.md#testing-results)
 - **[Server DLL Versions](server-dll-versions.md)** - Game version analysis
   - [Function signatures](server-dll-versions.md#function-signature-rva-0x3720)
-  - [Version differences](server-dll-versions.md#key-differences-from-steam-version)
+  - [Steam vs GOG comparison](server-dll-versions.md#steam-vs-gog-comparison)
 
 ## Documentation Files
 

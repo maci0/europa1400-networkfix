@@ -26,7 +26,7 @@ The game's network code was written expecting synchronous/blocking behavior but 
 
 **Server.dll Function at RVA 0x3720:**
 This critical function (at Relative Virtual Address 0x3720 within server.dll) validates incoming network packets but has harsh error handling:
-- Any checksum deviation immediately sets `context[0xE] = -1` 
+- Any checksum deviation immediately sets a persistent negative error state (`context[0xE] = -3`; stream errors set `-1`)
 - Returns negative values that propagate through the game engine
 - No retry mechanism for corrupted packets
 - Treats temporary network issues as permanent failures
@@ -34,7 +34,7 @@ This critical function (at Relative Virtual Address 0x3720 within server.dll) va
 **The packet flow problem:**
 ```
 Network packet arrives → Minor corruption (normal in VPN) → 
-Checksum fails → context[0xE] = -1 → Function returns -1 → 
+Checksum fails → context[0xE] = -3 → Function returns -1 → 
 Game engine interprets as fatal error → Out of Sync error
 ```
 

@@ -44,7 +44,8 @@ ServerPath=Server\server.dll
 
 **Default behavior:**
 - If `game.ini` is found, the `ServerPath` is read from `[Network]` section
-- If not found or invalid, falls back to `Server\server.dll`
+- If `ServerPath` is missing or empty, the legacy `Server` key is tried as a fallback
+- If still not found or invalid, falls back to `Server\server.dll`
 - Path is relative to game executable directory
 
 ### Example game.ini
@@ -63,7 +64,7 @@ Resolution=1920x1080
 Fullscreen=1
 ```
 
-**Note:** Only the `ServerPath` under `[Network]` is used by the plugin. Other settings are for the game itself.
+**Note:** The plugin only reads the `[Network]` section (`ServerPath`, or legacy `Server`). Other settings are for the game itself.
 
 ### Custom Server.dll Location
 
@@ -175,7 +176,7 @@ static const uint32_t MAX_LOG_LINES = 50000u;
 **To change:**
 1. Edit [src/logging.c](../src/logging.c)
 2. Modify `MAX_LOG_LINES`
-3. Rebuild: `make debug` (logging most relevant in debug builds)
+3. Rebuild: `make clean && make`
 
 **Example - Smaller log:**
 ```c
@@ -196,12 +197,13 @@ static const size_t LOG_BUFFER_SIZE = 2048;
 
 ### Log Level Control
 
-Currently, there are no runtime log levels. All log messages are written.
+Currently, there are no runtime log levels. All log messages are written, and
+release and debug builds log identically (the build type only changes
+optimization and symbols).
 
 **To reduce verbosity:**
-1. Use release build: `make` (less verbose than `make debug`)
-2. Comment out specific `log_msg()` calls in source code
-3. Rebuild
+1. Comment out specific `log_msg()` calls in source code
+2. Rebuild
 
 **Categories in logs:**
 - `[HOOK]` - Initialization and lifecycle
@@ -220,7 +222,7 @@ Currently, there are no runtime log levels. All log messages are written.
 
 Some log messages use rate limiting to prevent spam:
 
-Defined in [src/logging.h:17](../src/logging.h#L17):
+Defined in [src/logging.h:18](../src/logging.h#L18):
 
 ```c
 #define LOG_RATE_LIMIT_MS 5000 // 5s rate-limit window
@@ -264,6 +266,7 @@ while (total_sent < len && retry_count < SEND_MAX_RETRIES)
     if (result == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK)
     {
         Sleep(SEND_RETRY_DELAY_MS);
+        pump_pending_messages(); // keeps the loading dialog responsive
         retry_count++;
         continue;
     }
@@ -361,9 +364,7 @@ To add support for a new game version:
    ```
    Definition is in `src/versions.c`; `src/versions.h` only declares `extern const server_version_info_t known_versions[]`.
 
-4. **Register:** edit `src/versions.c` `known_versions[]` array (see existing Steam/GOG entries).
-
-5. **Rebuild and test:**
+4. **Rebuild and test:**
    ```bash
    make clean && make debug
    ```
@@ -380,7 +381,7 @@ value that parses to `1` counts (`"1"`, `"01"`, `" 1"`); opt-out switches
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `NETWORKFIX_DISABLE` | off | A/B baseline: hooks stay installed but `recv`/`send`/`srv_gameStreamReader` pass through with original game semantics. Does **not** disable fastsync, harness fault-injection/tracing (`HARNESS_TINY_BUFFERS`, `HARNESS_NET_TRACE`), or the evt guard. TCP_NODELAY **is** skipped (see `NETWORKFIX_NODELAY`). |
-| `NETWORKFIX_NODELAY` | on | Set `TCP_NODELAY` on each `server.dll` socket the first time it is seen. `=0` keeps Nagle. Skipped when the fix is disabled. |
+| `NETWORKFIX_NODELAY` | on | Set `TCP_NODELAY` on every `server.dll` socket. Re-checked on each call (a cheap `getsockopt` skips sockets already configured), so recycled socket handles are fixed too. `=0` keeps Nagle. Skipped when the fix is disabled. |
 | `NETWORKFIX_FASTSYNC` | on | Patch `server.dll`'s KERNEL32 `Sleep` IAT and clamp `Sleep(30)` to 1 ms. `=0` leaves the original 30 ms pump throttle. Independent of `NETWORKFIX_DISABLE`. |
 | `HARNESS_EVT_GUARD` | off (on in compose) | Signature-checked NULL guard on the game exe evt poll at `0x429800`. Harness-only. |
 | `HARNESS_TINY_BUFFERS` | off | If set to `N` > 0, shrink `SO_SNDBUF`/`SO_RCVBUF` to `N` bytes on each `server.dll` socket (fault injection). |
@@ -486,7 +487,7 @@ make clean && make debug
 
 **Solution:**
 - Verify path in `game.ini`
-- Use absolute path if relative doesn't work
+- Use a relative path inside the game directory ending in `.dll` (absolute paths are rejected, see [Path rules](#custom-serverdll-location))
 - Check Windows file permissions
 
 ### Problem: Wrong function hooked
@@ -516,19 +517,18 @@ make clean && make debug
 - Increase `SEND_MAX_RETRIES` to `5000` or higher (e.g. `10000`)
 - Reduce `SEND_RETRY_DELAY_MS` to 1 or 0
 - Verify hooks are actually being called (check logs)
-- Test with debug build for verbose logging
+- Test with debug build for symbols when attaching a debugger
 
 ### Problem: Log file grows too large
 
 **Solution:**
 1. Reduce `MAX_LOG_LINES` in [src/logging.c](../src/logging.c)
-2. Use release build instead of debug: `make` instead of `make debug`
-3. Manually delete `hook_log.txt` periodically
+2. Manually delete `hook_log.txt` periodically
 
 ## Configuration Best Practices
 
 1. **Start with defaults** - They work for most scenarios
-2. **Use debug build for testing** - More verbose logging helps diagnose issues
+2. **Use debug build for testing** - Symbols make crashes debuggable (logging is identical to release)
 3. **Test thoroughly** - Play for multiple in-game years after configuration changes
 4. **Document changes** - Keep notes on what you modified and why
 5. **One change at a time** - Don't modify multiple settings simultaneously

@@ -66,7 +66,7 @@ cd europa1400-networkfix
 make
 ```
 
-3. Or build the debug version (includes debug symbols and verbose logging):
+3. Or build the debug version (includes debug symbols):
 ```bash
 make debug
 ```
@@ -78,7 +78,7 @@ The compiled plugins will be in:
 ### Build Targets
 
 - `make` or `make all` - Build release version with optimizations
-- `make debug` - Build debug version with symbols and verbose logging
+- `make debug` - Build debug version with symbols (logging is identical to release)
 - `make test` - Build and run the automated test suite under Wine (see [Testing](docs/development-guide.md#automated-testing))
 - `make clean` - Remove compiled binaries
 - `make format` - Format source code with clang-format
