@@ -96,6 +96,7 @@ typedef struct
     int abort_after; /* bytes after which to inject abort_error (-1 disabled) */
     int abort_error; /* WSA error to inject (e.g. WSAECONNRESET) */
     int zero_at;     /* total bytes after which to return 0 ("connection closed") (-1 disabled) */
+    int stall_after; /* total bytes after which every call is WSAEWOULDBLOCK (-1 disabled) */
     int call_count;
     int total_accepted;
     int block_streak; /* internal: blocks emitted in current streak */
@@ -117,6 +118,13 @@ static int WSAAPI  mock_send(SOCKET s, const char *buf, int len, int flags)
         return SOCKET_ERROR;
     }
     g_send_script.block_streak = 0;
+
+    if (g_send_script.stall_after >= 0 && g_send_script.total_accepted >= g_send_script.stall_after)
+    {
+        /* Permanent stall: the peer stopped reading and the buffer never drains. */
+        WSASetLastError(WSAEWOULDBLOCK);
+        return SOCKET_ERROR;
+    }
 
     if (g_send_script.abort_after >= 0 && g_send_script.total_accepted >= g_send_script.abort_after)
     {
@@ -143,6 +151,7 @@ static void reset_state(void)
     memset(&g_send_script, 0, sizeof(g_send_script));
     g_send_script.abort_after = -1;
     g_send_script.zero_at = -1;
+    g_send_script.stall_after = -1;
     g_sleep_calls = 0;
     g_sleep_total_ms = 0;
     real_recv = mock_recv;
@@ -262,6 +271,7 @@ static void test_send_connaborted_zero_progress(void)
     int r = hook_send((SOCKET)1, msg, 10, 0);
 
     CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR on zero-progress abort, got %d", r);
+    CHECK(WSAGetLastError() == WSAECONNABORTED, "expected WSAECONNABORTED preserved, got %d", WSAGetLastError());
 }
 
 /* send: peer-closed (return 0) bails out and returns whatever was already sent. */
@@ -288,6 +298,38 @@ static void test_send_retry_counter_resets(void)
 
     CHECK(r == 4, "expected 4 bytes, got %d", r);
     CHECK(g_sleep_calls == 8, "expected 8 sleeps (2 per chunk x 4), got %d", g_sleep_calls);
+}
+
+/* send: persistent WSAEWOULDBLOCK with zero progress exhausts SEND_MAX_RETRIES
+ * and fails with WSAETIMEDOUT instead of hanging the game thread forever. */
+static void test_send_max_retries_zero_progress_returns_timeout(void)
+{
+    const char *msg = "abcdefghij";
+    g_send_script.chunk_size = 10;
+    g_send_script.stall_after = 0;
+
+    int r = hook_send((SOCKET)1, msg, 10, 0);
+
+    CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR after retry cap, got %d", r);
+    CHECK(WSAGetLastError() == WSAETIMEDOUT, "expected WSAETIMEDOUT, got %d", WSAGetLastError());
+    CHECK(g_sleep_calls == SEND_MAX_RETRIES, "expected %d sleeps, got %d", SEND_MAX_RETRIES, g_sleep_calls);
+    CHECK(g_send_script.call_count == SEND_MAX_RETRIES, "expected %d send calls, got %d", SEND_MAX_RETRIES,
+          g_send_script.call_count);
+}
+
+/* send: bytes accepted before the stall are still reported; the retry cap
+ * converts the failure to WSAETIMEDOUT but preserves the partial count. */
+static void test_send_max_retries_keeps_partial_progress(void)
+{
+    const char *msg = "abcdefghij";
+    g_send_script.chunk_size = 4;
+    g_send_script.stall_after = 4;
+
+    int r = hook_send((SOCKET)1, msg, 10, 0);
+
+    CHECK(r == 4, "expected partial 4, got %d", r);
+    CHECK(WSAGetLastError() == WSAETIMEDOUT, "expected WSAETIMEDOUT, got %d", WSAGetLastError());
+    CHECK(g_sleep_calls == SEND_MAX_RETRIES, "expected %d sleeps after stall, got %d", SEND_MAX_RETRIES, g_sleep_calls);
 }
 
 /* send: non-server caller bypasses retry — raw WSAEWOULDBLOCK propagates */
@@ -419,6 +461,24 @@ static void test_pattern_mask_ignores_wildcards(void)
     CHECK(off == 1, "expected offset 1 with wildcard, got %ld", off);
 }
 
+/* Matches at the region edges: offset 0, flush with the end, and a haystack
+ * exactly the size of the needle. Pins the i <= size - needle_size loop bound. */
+static void test_pattern_matches_at_region_edges(void)
+{
+    const unsigned char needle[] = {0x51, 0x8B};
+    const unsigned char mask[] = {0xFF, 0xFF};
+
+    const unsigned char head[] = {0x51, 0x8B, 0xDE, 0xAD};
+    CHECK(find_pattern_in_memory(head, sizeof(head), needle, mask, sizeof(needle)) == 0, "expected match at offset 0");
+
+    const unsigned char tail[] = {0xDE, 0xAD, 0x51, 0x8B};
+    CHECK(find_pattern_in_memory(tail, sizeof(tail), needle, mask, sizeof(needle)) == 2,
+          "expected match flush with region end");
+
+    CHECK(find_pattern_in_memory(needle, sizeof(needle), needle, mask, sizeof(needle)) == 0,
+          "expected match when haystack equals needle");
+}
+
 static void test_pattern_rejects_when_haystack_too_small(void)
 {
     const unsigned char hay[] = {0x51};
@@ -500,6 +560,19 @@ static void test_validate_rejects_when_too_close_to_end(void)
     /* rva_offset such that rva_offset + 50 >= module_size */
     BOOL ok = validate_function_prologue(blob, 90, sizeof(blob));
     CHECK(ok == FALSE, "expected FALSE when fewer than 50 bytes remain, got %d", ok);
+}
+
+/* Signed rel32 targets can point backwards; a target below the module base
+ * must be rejected just like one past the end. */
+static void test_validate_rejects_negative_jump_targets(void)
+{
+    unsigned char blob[128];
+
+    build_valid_prologue(blob, sizeof(blob), -40, 5); /* jz_target = 0 + 23 - 40 < 0 */
+    CHECK(validate_function_prologue(blob, 0, sizeof(blob)) == FALSE, "expected FALSE on negative JZ target");
+
+    build_valid_prologue(blob, sizeof(blob), 5, -40); /* jnz_target = 0 + 33 - 40 < 0 */
+    CHECK(validate_function_prologue(blob, 0, sizeof(blob)) == FALSE, "expected FALSE on negative JNZ target");
 }
 
 /* ---- SHA256 tests ---- */
@@ -587,6 +660,35 @@ static void test_sha256_empty_file(void)
           "empty file hash mismatch: %s", hash);
 
     DeleteFileW(path);
+}
+
+/* FIPS 180-4 known-answer vectors on non-empty input. "abc" covers the short
+ * single-block case; the 56-byte message forces padding into a second block,
+ * the multi-block path exercised when hashing server.dll-sized files. */
+static void test_sha256_fips_known_answers(void)
+{
+    static const struct
+    {
+        const char *data;
+        const char *hash;
+    } vectors[] = {
+        {"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+        {"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+         "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"},
+    };
+
+    for (unsigned long i = 0; i < sizeof(vectors) / sizeof(vectors[0]); i++)
+    {
+        wchar_t path[MAX_PATH];
+        CHECK(write_temp_file_tmp(vectors[i].data, (DWORD)strlen(vectors[i].data), path, MAX_PATH) == TRUE,
+              "vector %lu: could not write temp file", i);
+
+        char hash[65] = {0};
+        CHECK(calculate_file_sha256(path, hash, sizeof(hash)) == TRUE, "vector %lu: hash failed", i);
+        CHECK(strcmp(hash, vectors[i].hash) == 0, "vector %lu mismatch: got %s", i, hash);
+
+        DeleteFileW(path);
+    }
 }
 
 static void test_sha256_missing_file_returns_false(void)
@@ -874,6 +976,8 @@ int main(void)
     RUN(test_send_connaborted_zero_progress);
     RUN(test_send_zero_indicates_closed);
     RUN(test_send_retry_counter_resets);
+    RUN(test_send_max_retries_zero_progress_returns_timeout);
+    RUN(test_send_max_retries_keeps_partial_progress);
     RUN(test_send_non_server_passthrough);
     RUN(test_recv_non_server_passthrough);
 
@@ -885,6 +989,7 @@ int main(void)
     RUN(test_pattern_finds_exact_match);
     RUN(test_pattern_returns_minus_one_when_absent);
     RUN(test_pattern_mask_ignores_wildcards);
+    RUN(test_pattern_matches_at_region_edges);
     RUN(test_pattern_rejects_when_haystack_too_small);
     RUN(test_pattern_rejects_null_args);
 
@@ -892,10 +997,12 @@ int main(void)
     RUN(test_validate_rejects_missing_push_ecx);
     RUN(test_validate_rejects_jz_out_of_bounds);
     RUN(test_validate_rejects_jnz_out_of_bounds);
+    RUN(test_validate_rejects_negative_jump_targets);
     RUN(test_validate_rejects_when_too_close_to_end);
 
     RUN(test_sha256_deterministic_and_collision_free_for_distinct_inputs);
     RUN(test_sha256_empty_file);
+    RUN(test_sha256_fips_known_answers);
     RUN(test_sha256_missing_file_returns_false);
     RUN(test_sha256_undersized_buffer_returns_false);
     RUN(test_real_server_dll_fixtures);
