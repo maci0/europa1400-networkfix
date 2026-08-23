@@ -1043,6 +1043,12 @@ static void restore_server_sleep_iat(void)
     if (!g_server_sleep_iat || !real_server_sleep)
         return;
 
+    /* This IAT patch is not MinHook-managed, so MH_DisableHook/MH_Uninitialize
+     * never freeze threads executing hook_server_sleep. A pump thread that
+     * entered the hook just before the swap below resumes afterwards and reads
+     * these globals again, so they must stay valid: kernel32!Sleep lives for
+     * the process lifetime, hence the pointers are kept (never NULLed) and
+     * this function stays idempotent if cleanup runs twice. */
     DWORD oldProtect;
     if (VirtualProtect(&g_server_sleep_iat->u1.Function, sizeof(g_server_sleep_iat->u1.Function),
                        PAGE_READWRITE, &oldProtect))
@@ -1056,8 +1062,6 @@ static void restore_server_sleep_iat(void)
         }
         log_msg("[FASTSYNC] Restored server.dll Sleep IAT");
     }
-    g_server_sleep_iat = NULL;
-    real_server_sleep = NULL;
 }
 
 /* Best-effort: failure only means the harness guard is off, never fails init. */

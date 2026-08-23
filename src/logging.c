@@ -43,12 +43,22 @@ static void reset_log_file(void)
 // This function is thread-safe.
 void log_msg(const char *fmt, ...)
 {
+    // Fast path (unlocked read): skip the section entirely when logging is down.
     if (!g_logctx.critical_section_initialized || g_logctx.log_file == INVALID_HANDLE_VALUE)
     {
         return;
     }
 
     EnterCriticalSection(&g_logctx.critical_section);
+
+    // Re-check under the section: close_logging() may have invalidated the
+    // file handle between the fast-path check and acquiring the section, and
+    // writing to a closed (or recycled) handle would corrupt unrelated state.
+    if (!g_logctx.critical_section_initialized || g_logctx.log_file == INVALID_HANDLE_VALUE)
+    {
+        LeaveCriticalSection(&g_logctx.critical_section);
+        return;
+    }
 
     if (++g_logctx.log_line_count > MAX_LOG_LINES)
     {
@@ -225,19 +235,28 @@ bool init_logging(HMODULE hModule)
 
 void close_logging(void)
 {
-    if (g_logctx.log_file != INVALID_HANDLE_VALUE)
+    /* Invalidate the file handle under the section so a concurrent log_msg
+     * either skips or finishes its write before we close the stale handle
+     * outside the section. */
+    EnterCriticalSection(&g_logctx.critical_section);
+    HANDLE file = g_logctx.log_file;
+    g_logctx.log_file = INVALID_HANDLE_VALUE;
+    g_logctx.critical_section_initialized = false;
+    LeaveCriticalSection(&g_logctx.critical_section);
+
+    if (file != INVALID_HANDLE_VALUE)
     {
         // Flush any remaining data before closing
-        FlushFileBuffers(g_logctx.log_file);
-        CloseHandle(g_logctx.log_file);
-        g_logctx.log_file = INVALID_HANDLE_VALUE;
+        FlushFileBuffers(file);
+        CloseHandle(file);
     }
 
-    if (g_logctx.critical_section_initialized)
-    {
-        DeleteCriticalSection(&g_logctx.critical_section);
-        g_logctx.critical_section_initialized = false;
-    }
+    /* The critical section is deliberately never deleted. On a real
+     * FreeLibrary unload game threads are not joined first, so a logger can
+     * still be inside or queued on the section here; deleting an in-use
+     * CRITICAL_SECTION is undefined behavior. Leaking one fixed-size section
+     * per process keeps those late callers safe: they acquire it normally,
+     * see the invalidated handle and return without writing. */
 }
 
 /**
@@ -286,7 +305,7 @@ void log_msg_rate_limited(const char *key, const char *fmt, ...)
     if (cache_slot == -1)
     {
         cache_slot = 0;
-        DWORD oldest_time = rate_limit_cache[0].last_logged;
+        ULONGLONG oldest_time = rate_limit_cache[0].last_logged;
         for (int i = 1; i < LOG_RATE_LIMIT_SLOTS; i++)
         {
             if (rate_limit_cache[i].last_logged < oldest_time)
