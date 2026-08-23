@@ -21,8 +21,9 @@ static const uint32_t MAX_LOG_LINES = 50000u;     /* Max lines before rollover *
 static const size_t   LOG_BUFFER_SIZE = 2048;     /* Log message buffer size */
 static const size_t   TIMESTAMP_BUFFER_SIZE = 64; /* Timestamp buffer size */
 
-/* Distinct rate-limit keys tracked at once; overflow evicts the oldest. */
-#define LOG_RATE_LIMIT_SLOTS 10
+/* Distinct rate-limit keys tracked at once; overflow evicts the oldest.
+ * Headroom above the ten keys currently used by hooks.c. */
+#define LOG_RATE_LIMIT_SLOTS 16
 
 /* Last socket whose buffer sizes were logged; dedups repeated log lines. */
 static SOCKET s_last_logged_socket = INVALID_SOCKET;

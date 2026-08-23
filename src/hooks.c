@@ -958,37 +958,31 @@ static VOID WINAPI       hook_server_sleep(DWORD ms)
     real_server_sleep(ms);
 }
 
-static void patch_server_sleep_iat(void)
+/* Walks server.dll's import table and returns the IAT slot for KERNEL32!Sleep,
+ * or NULL when the import is absent or any table bound is inconsistent. Every
+ * dereference is bounds-checked against the mapped image so a corrupt or
+ * hand-crafted PE can never send this walk outside the module. */
+static IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
 {
-    if (env_opt_out("NETWORKFIX_FASTSYNC"))
-    {
-        log_msg("[FASTSYNC] Disabled via NETWORKFIX_FASTSYNC=0");
-        return;
-    }
-
-    if (!g_hServerDll || g_server_size == 0)
-        return;
-
     const BYTE             *base = (const BYTE *)g_hServerDll;
     const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)base;
     if (g_server_size < sizeof(IMAGE_DOS_HEADER) || dos->e_magic != IMAGE_DOS_SIGNATURE)
-        return;
+        return NULL;
     if ((size_t)dos->e_lfanew + sizeof(IMAGE_NT_HEADERS) > g_server_size)
-        return;
+        return NULL;
     const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE)
-        return;
+        return NULL;
     const IMAGE_DATA_DIRECTORY *dir =
         &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-    if (dir->VirtualAddress == 0 || dir->Size == 0)
-        return;
-    if ((size_t)dir->VirtualAddress + sizeof(IMAGE_IMPORT_DESCRIPTOR) > g_server_size)
-        return;
+    /* The whole descriptor array must fit: imp_end below derives from dir->Size. */
+    if (dir->VirtualAddress == 0 || dir->Size < sizeof(IMAGE_IMPORT_DESCRIPTOR) ||
+        (size_t)dir->VirtualAddress + dir->Size > g_server_size)
+        return NULL;
 
     const IMAGE_IMPORT_DESCRIPTOR *imp =
         (const IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress);
-    const IMAGE_IMPORT_DESCRIPTOR *imp_end =
-        (const IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress + dir->Size);
+    const IMAGE_IMPORT_DESCRIPTOR *imp_end = imp + dir->Size / sizeof(IMAGE_IMPORT_DESCRIPTOR);
     for (; imp < imp_end && imp->Name != 0; imp++)
     {
         if ((size_t)imp->Name >= g_server_size)
@@ -1006,36 +1000,65 @@ static void patch_server_sleep_iat(void)
         IMAGE_THUNK_DATA *iatThunk = (IMAGE_THUNK_DATA *)(base + imp->FirstThunk);
         for (; nameThunk->u1.AddressOfData != 0; nameThunk++, iatThunk++)
         {
+            /* The NUL terminator is untrusted data; stop before either thunk
+             * array would leave the module. */
+            if ((size_t)((const BYTE *)nameThunk - base) + sizeof(IMAGE_THUNK_DATA) >
+                    g_server_size ||
+                (size_t)((BYTE *)iatThunk - base) + sizeof(IMAGE_THUNK_DATA) > g_server_size)
+            {
+                break;
+            }
             if (nameThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)
                 continue;
             if ((size_t)nameThunk->u1.AddressOfData + sizeof(IMAGE_IMPORT_BY_NAME) > g_server_size)
                 continue;
             const IMAGE_IMPORT_BY_NAME *ibn =
                 (const IMAGE_IMPORT_BY_NAME *)(base + nameThunk->u1.AddressOfData);
-            if (strcmp((const char *)ibn->Name, "Sleep") != 0)
-                continue;
-            DWORD oldProtect;
-            if (!VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function),
-                                PAGE_READWRITE, &oldProtect))
+            if (strcmp((const char *)ibn->Name, "Sleep") == 0)
             {
-                log_msg("[FASTSYNC] VirtualProtect failed: %lu", GetLastError());
-                return;
+                return iatThunk;
             }
-            real_server_sleep = (VOID(WINAPI *)(DWORD))(uintptr_t)iatThunk->u1.Function;
-            iatThunk->u1.Function = (uintptr_t)hook_server_sleep;
-            g_server_sleep_iat = iatThunk;
-            if (!VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function), oldProtect,
-                                &oldProtect))
-            {
-                // Page stays writable for the process lifetime; surface it.
-                log_msg("[FASTSYNC] Failed to restore IAT page protection: %lu", GetLastError());
-            }
-            log_msg("[FASTSYNC] Patched server.dll Sleep IAT slot %p (orig %p)",
-                    (void *)&iatThunk->u1.Function, (void *)real_server_sleep);
-            return;
         }
+        break; // KERNEL32.dll appears at most once in an import table
     }
-    log_msg("[FASTSYNC] server.dll KERNEL32 Sleep import not found — pump throttle left in place");
+    return NULL;
+}
+
+static void patch_server_sleep_iat(void)
+{
+    if (env_opt_out("NETWORKFIX_FASTSYNC"))
+    {
+        log_msg("[FASTSYNC] Disabled via NETWORKFIX_FASTSYNC=0");
+        return;
+    }
+
+    if (!g_hServerDll || g_server_size == 0)
+        return;
+
+    IMAGE_THUNK_DATA *thunk = find_kernel32_sleep_thunk();
+    if (!thunk)
+    {
+        log_msg("[FASTSYNC] KERNEL32 Sleep import not found, pump throttle left in place");
+        return;
+    }
+
+    DWORD oldProtect;
+    if (!VirtualProtect(&thunk->u1.Function, sizeof(thunk->u1.Function), PAGE_READWRITE,
+                        &oldProtect))
+    {
+        log_msg("[FASTSYNC] VirtualProtect failed: %lu", GetLastError());
+        return;
+    }
+    real_server_sleep = (VOID(WINAPI *)(DWORD))(uintptr_t)thunk->u1.Function;
+    thunk->u1.Function = (uintptr_t)hook_server_sleep;
+    g_server_sleep_iat = thunk;
+    if (!VirtualProtect(&thunk->u1.Function, sizeof(thunk->u1.Function), oldProtect, &oldProtect))
+    {
+        // Page stays writable for the process lifetime; surface it.
+        log_msg("[FASTSYNC] Failed to restore IAT page protection: %lu", GetLastError());
+    }
+    log_msg("[FASTSYNC] Patched server.dll Sleep IAT slot %p (orig %p)",
+            (void *)&thunk->u1.Function, (void *)real_server_sleep);
 }
 
 static void restore_server_sleep_iat(void)
