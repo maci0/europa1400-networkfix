@@ -32,11 +32,13 @@ extern srv_gameStreamReader_t real_srv_gameStreamReader;
 int __cdecl                   hook_srv_gameStreamReader(int *ctx, int received, int totalLen);
 
 /* pattern_matcher.c internals exposed under NETWORKFIX_TEST */
-long find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size,
-                            const unsigned char *needle, const unsigned char *mask,
-                            size_t needle_size);
-BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset,
-                                size_t module_size);
+long                 find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size,
+                                            const unsigned char *needle, const unsigned char *mask,
+                                            size_t needle_size);
+BOOL                 validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset,
+                                                size_t module_size);
+PATTERN_MATCH_RESULT find_first_valid_match(const unsigned char *base_addr, size_t module_size,
+                                            DWORD *found_rva);
 /* hooks.c PE import walk, exposed under NETWORKFIX_TEST */
 IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void);
 /* sha256.c public API */
@@ -636,6 +638,73 @@ static void test_validate_rejects_negative_jump_targets(void)
           "expected FALSE on negative JNZ target");
 }
 
+/* ---- find_first_valid_match tests (scan-all-candidates contract) ---- */
+
+#define SCAN_BUF_SIZE 160u
+
+/* Stamps a full 36-byte pattern instance (wildcard positions zeroed) at `off`
+ * and patches both rel32 branch operands so their absolute targets are
+ * jz_target_abs / jnz_target_abs. */
+static void stamp_pattern_instance(unsigned char *buf, size_t buf_size, size_t off,
+                                   int32_t jz_target_abs, int32_t jnz_target_abs)
+{
+    static const unsigned char tmpl[] = {
+        0x51, 0x8B, 0x4C, 0x24, 0x0C, 0x53, 0x55, 0x8B, 0x6C, 0x24, 0x10, 0x56,
+        0x57, 0x85, 0xED, 0x8B, 0xF1, 0x0F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x80,
+        0x7D, 0x5C, 0x72, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x45, 0x38,
+    };
+    CHECK(off + sizeof(tmpl) <= buf_size, "instance does not fit test buffer");
+    memcpy(buf + off, tmpl, sizeof(tmpl));
+    /* JZ operand at instance offset 19 (opcode ends at 23), JNZ at 29 (ends at 33). */
+    int32_t jz_rel = jz_target_abs - (int32_t)(off + 23);
+    int32_t jnz_rel = jnz_target_abs - (int32_t)(off + 33);
+    memcpy(buf + off + 19, &jz_rel, sizeof(jz_rel));
+    memcpy(buf + off + 29, &jnz_rel, sizeof(jnz_rel));
+}
+
+/* An earlier candidate that fails validation must not mask a later valid one:
+ * the scan continues and accepts the first candidate that validates. */
+static void test_scan_accepts_first_valid_skips_earlier_invalid(void)
+{
+    unsigned char buf[SCAN_BUF_SIZE];
+    memset(buf, 0xCC, sizeof(buf));
+    stamp_pattern_instance(buf, sizeof(buf), 8, 0x40000000, 5); /* JZ target out of bounds */
+    stamp_pattern_instance(buf, sizeof(buf), 96, 100, 120);     /* targets inside buffer */
+
+    DWORD                rva = 0;
+    PATTERN_MATCH_RESULT r = find_first_valid_match(buf, sizeof(buf), &rva);
+    CHECK(r == PATTERN_MATCH_SUCCESS, "expected SUCCESS, got %d (%s)", (int)r,
+          pattern_match_result_to_string(r));
+    CHECK(rva == 96, "expected the second (valid) candidate at RVA 96, got 0x%X", (unsigned)rva);
+}
+
+/* Occurrences exist but none validates: VALIDATION_FAILED, no RVA reported.
+ * The composite zeroes found_rva before calling, so failure must report 0. */
+static void test_scan_reports_validation_failed_when_all_rejected(void)
+{
+    unsigned char buf[SCAN_BUF_SIZE];
+    memset(buf, 0xCC, sizeof(buf));
+    stamp_pattern_instance(buf, sizeof(buf), 8, 0x40000000, 5);
+
+    DWORD                rva = 0;
+    PATTERN_MATCH_RESULT r = find_first_valid_match(buf, sizeof(buf), &rva);
+    CHECK(r == PATTERN_MATCH_VALIDATION_FAILED, "expected VALIDATION_FAILED, got %d", (int)r);
+    CHECK(rva == 0, "no RVA may be reported when every candidate is rejected, got 0x%X",
+          (unsigned)rva);
+}
+
+/* No occurrence at all: NOT_FOUND. */
+static void test_scan_reports_not_found_without_occurrences(void)
+{
+    unsigned char buf[SCAN_BUF_SIZE];
+    memset(buf, 0xCC, sizeof(buf));
+
+    DWORD                rva = 0xDEADBEEF;
+    PATTERN_MATCH_RESULT r = find_first_valid_match(buf, sizeof(buf), &rva);
+    CHECK(r == PATTERN_MATCH_NOT_FOUND, "expected NOT_FOUND, got %d (%s)", (int)r,
+          pattern_match_result_to_string(r));
+}
+
 /* ---- SHA256 tests ---- */
 
 static BOOL make_temp_path(wchar_t *out, size_t out_chars)
@@ -1050,6 +1119,19 @@ static void test_sleep_thunk_rejects_rva_past_module_end(void)
     teardown_walker();
 }
 
+/* Truncated view ending flush with the first name thunk: the sentinel read for
+ * the NEXT thunk would land exactly past the declared size. The walk must stop
+ * on the bounds check without ever dereferencing beyond the view. */
+static void test_sleep_thunk_sentinel_outside_view_returns_null(void)
+{
+    build_fake_pe("KERNEL32.dll", "Sleep");
+    setup_walker();
+    g_server_size = FP_NAMETHUNK_OFF + sizeof(IMAGE_THUNK_DATA);
+    CHECK(find_kernel32_sleep_thunk() == NULL,
+          "expected NULL when the thunk array ends flush with the module size");
+    teardown_walker();
+}
+
 /* ---- Real server.dll fixture tests ---- */
 
 /* Looks up a hash in known_versions[]. Returns matching entry or NULL. */
@@ -1347,6 +1429,10 @@ int main(void)
     RUN(test_validate_rejects_negative_jump_targets);
     RUN(test_validate_rejects_when_too_close_to_end);
 
+    RUN(test_scan_accepts_first_valid_skips_earlier_invalid);
+    RUN(test_scan_reports_validation_failed_when_all_rejected);
+    RUN(test_scan_reports_not_found_without_occurrences);
+
     RUN(test_sha256_deterministic_and_collision_free_for_distinct_inputs);
     RUN(test_sha256_empty_file);
     RUN(test_sha256_fips_known_answers);
@@ -1377,6 +1463,7 @@ int main(void)
     RUN(test_sleep_thunk_rejects_unterminated_import_name);
     RUN(test_sleep_thunk_rejects_unterminated_dll_name);
     RUN(test_sleep_thunk_rejects_rva_past_module_end);
+    RUN(test_sleep_thunk_sentinel_outside_view_returns_null);
 
     WSACleanup();
 

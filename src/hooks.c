@@ -1036,16 +1036,21 @@ HOOK_STATIC IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
         const IMAGE_THUNK_DATA *nameThunk =
             (const IMAGE_THUNK_DATA *)(base + imp->OriginalFirstThunk);
         IMAGE_THUNK_DATA *iatThunk = (IMAGE_THUNK_DATA *)(base + imp->FirstThunk);
-        for (; nameThunk->u1.AddressOfData != 0; nameThunk++, iatThunk++)
+        for (;; nameThunk++, iatThunk++)
         {
             /* The NUL terminator is untrusted data; stop before either thunk
-             * array would leave the module. */
+             * array would leave the module. Bounds must be re-checked before
+             * every dereference, including the sentinel read below: the array
+             * may end flush with the module, so testing the sentinel first
+             * could read past the declared image size. */
             if ((size_t)((const BYTE *)nameThunk - base) + sizeof(IMAGE_THUNK_DATA) >
                     g_server_size ||
                 (size_t)((BYTE *)iatThunk - base) + sizeof(IMAGE_THUNK_DATA) > g_server_size)
             {
                 break;
             }
+            if (nameThunk->u1.AddressOfData == 0)
+                break;
             if (nameThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)
                 continue;
             if ((size_t)nameThunk->u1.AddressOfData + sizeof(IMAGE_IMPORT_BY_NAME) > g_server_size)
