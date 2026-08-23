@@ -647,19 +647,23 @@ static void test_validate_rejects_negative_jump_targets(void)
 
 #define SCAN_BUF_SIZE 160u
 
+/* The srv_gameStreamReader signature bytes with wildcards zeroed, pinned to
+ * src/pattern_matcher.c's SRV_GAMESTREAMREADER_PATTERN; shared by the
+ * synthetic-image stamper below and the real-fixture uniqueness scan. */
+static const unsigned char SRV_PATTERN_BYTES[] = {
+    0x51, 0x8B, 0x4C, 0x24, 0x0C, 0x53, 0x55, 0x8B, 0x6C, 0x24, 0x10, 0x56,
+    0x57, 0x85, 0xED, 0x8B, 0xF1, 0x0F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x80,
+    0x7D, 0x5C, 0x72, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x45, 0x38,
+};
+
 /* Stamps a full 36-byte pattern instance (wildcard positions zeroed) at `off`
  * and patches both rel32 branch operands so their absolute targets are
  * jz_target_abs / jnz_target_abs. */
 static void stamp_pattern_instance(unsigned char *buf, size_t buf_size, size_t off,
                                    int32_t jz_target_abs, int32_t jnz_target_abs)
 {
-    static const unsigned char tmpl[] = {
-        0x51, 0x8B, 0x4C, 0x24, 0x0C, 0x53, 0x55, 0x8B, 0x6C, 0x24, 0x10, 0x56,
-        0x57, 0x85, 0xED, 0x8B, 0xF1, 0x0F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x80,
-        0x7D, 0x5C, 0x72, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x45, 0x38,
-    };
-    CHECK(off + sizeof(tmpl) <= buf_size, "instance does not fit test buffer");
-    memcpy(buf + off, tmpl, sizeof(tmpl));
+    CHECK(off + sizeof(SRV_PATTERN_BYTES) <= buf_size, "instance does not fit test buffer");
+    memcpy(buf + off, SRV_PATTERN_BYTES, sizeof(SRV_PATTERN_BYTES));
     /* JZ operand at instance offset 19 (opcode ends at 23), JNZ at 29 (ends at 33). */
     int32_t jz_rel = jz_target_abs - (int32_t)(off + 23);
     int32_t jnz_rel = jnz_target_abs - (int32_t)(off + 33);
@@ -1196,11 +1200,6 @@ static void run_fixture_tests(const wchar_t *fixture_path)
     }
 
     /* Uniqueness: pattern occurs exactly once. */
-    const unsigned char needle[] = {
-        0x51, 0x8B, 0x4C, 0x24, 0x0C, 0x53, 0x55, 0x8B, 0x6C, 0x24, 0x10, 0x56,
-        0x57, 0x85, 0xED, 0x8B, 0xF1, 0x0F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x80,
-        0x7D, 0x5C, 0x72, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x45, 0x38,
-    };
     const unsigned char mask[] = {
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF,
@@ -1210,13 +1209,14 @@ static void run_fixture_tests(const wchar_t *fixture_path)
     {
         const unsigned char *base = (const unsigned char *)mi.lpBaseOfDll;
         size_t               size = mi.SizeOfImage;
-        long first = find_pattern_in_memory(base, size, needle, mask, sizeof(needle));
+        long                 first =
+            find_pattern_in_memory(base, size, SRV_PATTERN_BYTES, mask, sizeof(SRV_PATTERN_BYTES));
         CHECK(first >= 0, "first match not found");
         if (first >= 0)
         {
             long step = first + 1;
-            long second =
-                find_pattern_in_memory(base + step, size - step, needle, mask, sizeof(needle));
+            long second = find_pattern_in_memory(base + step, size - step, SRV_PATTERN_BYTES, mask,
+                                                 sizeof(SRV_PATTERN_BYTES));
             CHECK(second == -1, "pattern matched more than once (second hit at +0x%lX)",
                   first + 1 + second);
         }
