@@ -6,6 +6,13 @@
 #include <windows.h>
 #include <winsock2.h>
 
+// Cap retries to avoid hanging the game thread forever on a persistently
+// full send buffer (peer not reading). 5000 * 1ms ~ 5 s before we give
+// up with WSAETIMEDOUT, long enough for normal VPN jitter, finite
+// enough to avoid an INT_MAX busy-loop that overflows signed int.
+#define SEND_MAX_RETRIES 5000
+#define SEND_RETRY_DELAY_MS 1 // Delay between send retries (matches original)
+
 // Hook initialization and cleanup functions
 BOOL init_hooks(void);
 void cleanup_hooks(void);
