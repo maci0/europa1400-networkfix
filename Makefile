@@ -33,7 +33,7 @@ SRCS := $(CORE_SRCS) $(MINHOOK_SRCS)
 TEST_CORE_SRCS := test/test_hooks.c src/hooks.c src/logging.c src/sha256.c src/pattern_matcher.c src/versions.c
 TEST_SRCS := $(TEST_CORE_SRCS) $(MINHOOK_SRCS)
 CFLAGS := -I$(MINHOOK_DIR)/include -Isrc
-LDFLAGS := -lc -lws2_32 -lshlwapi -ladvapi32
+LDFLAGS := -lc -lws2_32 -lshlwapi -ladvapi32 -luser32
 
 .PHONY: all clean install test build-test check-zig format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
 

@@ -65,7 +65,8 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
     log_msg("[SHA256] Hash object created successfully");
 
     // Read and hash file in chunks - check ReadFile success to detect I/O errors
-    BYTE  buffer[4096];
+    // 16 KiB balances syscall count against 32-bit thread stack headroom.
+    BYTE  buffer[16384];
     DWORD bytesRead;
     DWORD totalBytesRead = 0;
 
