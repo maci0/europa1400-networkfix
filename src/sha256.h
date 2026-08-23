@@ -2,6 +2,7 @@
 #define SHA256_H
 
 #include <windows.h>
+#include <winsock2.h>
 
 /**
  * Calculate SHA256 hash of a file using Windows CryptoAPI.

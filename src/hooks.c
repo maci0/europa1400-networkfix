@@ -123,7 +123,7 @@ static DWORD detect_server_version()
 {
     if (!g_hServerDll)
     {
-        logf("[HOOK] Invalid server module handle");
+        log_msg("[HOOK] Invalid server module handle");
         return 0;
     }
 
@@ -132,7 +132,7 @@ static DWORD detect_server_version()
     DWORD   pathLen = GetModuleFileNameW(g_hServerDll, serverPath, MAX_PATH);
     if (pathLen == 0 || pathLen >= MAX_PATH)
     {
-        logf("[HOOK] Failed to get module file name: %lu", GetLastError());
+        log_msg("[HOOK] Failed to get module file name: %lu", GetLastError());
         return 0;
     }
 
@@ -140,11 +140,11 @@ static DWORD detect_server_version()
     char fileHash[65]; // 64 chars + null terminator
     if (!calculate_file_sha256(serverPath, fileHash, sizeof(fileHash)))
     {
-        logf("[HOOK] Failed to calculate SHA256 for server.dll");
+        log_msg("[HOOK] Failed to calculate SHA256 for server.dll");
         return 0;
     }
 
-    logf("[HOOK] server.dll SHA256: %s", fileHash);
+    log_msg("[HOOK] server.dll SHA256: %s", fileHash);
 
     // Try pattern matching first
     DWORD                pattern_rva = 0;
@@ -152,24 +152,24 @@ static DWORD detect_server_version()
 
     if (result == PATTERN_MATCH_SUCCESS)
     {
-        logf("[HOOK] Pattern matcher found srv_gameStreamReader at RVA: 0x%X", pattern_rva);
+        log_msg("[HOOK] Pattern matcher found srv_gameStreamReader at RVA: 0x%X", pattern_rva);
         return pattern_rva;
     }
 
-    logf("[HOOK] Pattern matching failed: %s", pattern_match_result_to_string(result));
+    log_msg("[HOOK] Pattern matching failed: %s", pattern_match_result_to_string(result));
 
     // Fallback to SHA256-based version lookup
     for (int i = 0; known_versions[i].sha256_hash != NULL; i++)
     {
         if (strcmp(fileHash, known_versions[i].sha256_hash) == 0)
         {
-            logf("[HOOK] Fallback: Detected %s version (RVA: 0x%X)", known_versions[i].version_name,
-                 known_versions[i].target_rva);
+            log_msg("[HOOK] Fallback: Detected %s version (RVA: 0x%X)",
+                    known_versions[i].version_name, known_versions[i].target_rva);
             return known_versions[i].target_rva;
         }
     }
 
-    logf("[HOOK] Unknown server.dll version with hash: %s", fileHash);
+    log_msg("[HOOK] Unknown server.dll version with hash: %s", fileHash);
     return 0;
 }
 
@@ -254,10 +254,10 @@ static BOOL get_module_dir(HMODULE hModule, char *out /* [MAX_PATH] */)
 
 static BOOL load_server_dll(const char *serverPath)
 {
-    logf("[HOOK] Loading server.dll from: %s", serverPath);
+    log_msg("[HOOK] Loading server.dll from: %s", serverPath);
     if (!is_safe_server_path(serverPath))
     {
-        logf("[HOOK] Rejected unsafe server path: %s", serverPath);
+        log_msg("[HOOK] Rejected unsafe server path: %s", serverPath);
         return FALSE;
     }
 
@@ -275,17 +275,17 @@ static BOOL load_server_dll(const char *serverPath)
             // Prefix match alone accepts C:\GuildExtra; require containment
             if (!path_is_within_dir(canonical, game_dir))
             {
-                logf("[HOOK] Rejected path outside game dir: %s -> %s", serverPath, canonical);
+                log_msg("[HOOK] Rejected path outside game dir: %s -> %s", serverPath, canonical);
                 return FALSE;
             }
-            logf("[HOOK] Canonical server path: %s", canonical);
+            log_msg("[HOOK] Canonical server path: %s", canonical);
             g_hServerDll = LoadLibraryA(canonical);
             if (!g_hServerDll)
             {
-                logf("[HOOK] Failed to load server.dll (error: %lu)", GetLastError());
+                log_msg("[HOOK] Failed to load server.dll (error: %lu)", GetLastError());
                 return FALSE;
             }
-            logf("[HOOK] Server.dll loaded at %p", (void *)g_hServerDll);
+            log_msg("[HOOK] Server.dll loaded at %p", (void *)g_hServerDll);
             return TRUE;
         }
     }
@@ -295,11 +295,11 @@ static BOOL load_server_dll(const char *serverPath)
     if (!g_hServerDll)
     {
         DWORD error = GetLastError();
-        logf("[HOOK] Failed to load server.dll (error: %lu)", error);
+        log_msg("[HOOK] Failed to load server.dll (error: %lu)", error);
         return FALSE;
     }
     // No Sleep(100) — LoadLibrary is synchronous; original race comment not reproducible.
-    logf("[HOOK] Server.dll loaded at %p", (void *)g_hServerDll);
+    log_msg("[HOOK] Server.dll loaded at %p", (void *)g_hServerDll);
     return TRUE;
 }
 
@@ -315,11 +315,12 @@ static BOOL preload_hash_server_file(const char *path, char out[65])
     char    file_path[MAX_PATH] = {0};
     wchar_t wpath[MAX_PATH];
     if (!get_module_dir(g_hModule, module_dir) || !PathCombineA(file_path, module_dir, path) ||
-        MultiByteToWideChar(CP_ACP, 0, file_path, -1, wpath, MAX_PATH) == 0 || !calculate_file_sha256(wpath, out, 65))
+        MultiByteToWideChar(CP_ACP, 0, file_path, -1, wpath, MAX_PATH) == 0 ||
+        !calculate_file_sha256(wpath, out, 65))
     {
         return FALSE;
     }
-    logf("[HOOK] Pre-load SHA256: %s", out);
+    log_msg("[HOOK] Pre-load SHA256: %s", out);
     return TRUE;
 }
 
@@ -362,7 +363,7 @@ PATH_STATIC BOOL init_server_module(void)
     // DEFAULT_SERVER_PATH instead of aborting initialization.
     if (!loaded && (!serverPath || strcmp(serverPath, DEFAULT_SERVER_PATH) != 0))
     {
-        logf("[HOOK] Falling back to %s", DEFAULT_SERVER_PATH);
+        log_msg("[HOOK] Falling back to %s", DEFAULT_SERVER_PATH);
         memset(preHash, 0, sizeof(preHash));
         serverPath = DEFAULT_SERVER_PATH;
         preload_hash_server_file(serverPath, preHash);
@@ -389,8 +390,9 @@ PATH_STATIC BOOL init_server_module(void)
             {
                 if (strcmp(preHash, postHash) != 0)
                 {
-                    logf("[HOOK] Hash mismatch pre/post load: %s != %s — possible replacement, aborting", preHash,
-                         postHash);
+                    log_msg("[HOOK] Hash mismatch pre/post load: %s != %s — possible replacement, "
+                            "aborting",
+                            preHash, postHash);
                     reset_server_globals();
                     return FALSE;
                 }
@@ -404,12 +406,12 @@ PATH_STATIC BOOL init_server_module(void)
     {
         g_server_base = (uintptr_t)module_info.lpBaseOfDll;
         g_server_size = module_info.SizeOfImage;
-        logf("[HOOK] Server module range: 0x%p - 0x%p (size: 0x%zX)", (void *)g_server_base,
-             (void *)(g_server_base + g_server_size), g_server_size);
+        log_msg("[HOOK] Server module range: 0x%p - 0x%p (size: 0x%zX)", (void *)g_server_base,
+                (void *)(g_server_base + g_server_size), g_server_size);
     }
     else
     {
-        logf("[HOOK] Failed to get server module info: %lu", GetLastError());
+        log_msg("[HOOK] Failed to get server module info: %lu", GetLastError());
         reset_server_globals();
         return FALSE;
     }
@@ -463,7 +465,7 @@ DWORD WINAPI hook_GetTickCount(void)
     }
     else
     {
-        logf("[SERVER HOOK] GetTickCount was NULL. Falling back to 0");
+        log_msg("[SERVER HOOK] GetTickCount was NULL. Falling back to 0");
         return 0;
     }
 }
@@ -492,7 +494,7 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
     // Validate parameters
     if (!ctx)
     {
-        logf("[SERVER HOOK] srv_gameStreamReader called with NULL context");
+        log_msg("[SERVER HOOK] srv_gameStreamReader called with NULL context");
         return -1;
     }
 
@@ -503,22 +505,23 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
     BOOL modified = false;
     if (ctx[SRV_CTX_ERROR_INDEX] < 0)
     {
-        logf("[SERVER HOOK] srv_gameStreamReader: Fixed negative ctx[%d] (%d -> 0)", SRV_CTX_ERROR_INDEX,
-             ctx[SRV_CTX_ERROR_INDEX]);
+        log_msg("[SERVER HOOK] srv_gameStreamReader: Fixed negative ctx[%d] (%d -> 0)",
+                SRV_CTX_ERROR_INDEX, ctx[SRV_CTX_ERROR_INDEX]);
         ctx[SRV_CTX_ERROR_INDEX] = 0;
         modified = true;
     }
 
     if (ret < 0)
     {
-        logf("[SERVER HOOK] srv_gameStreamReader: Fixed negative return value (%d -> 0)", ret);
+        log_msg("[SERVER HOOK] srv_gameStreamReader: Fixed negative return value (%d -> 0)", ret);
         ret = 0;
         modified = true;
     }
 
     if (modified)
     {
-        logf("[SERVER HOOK] srv_gameStreamReader: received=%d, totalLen=%d, result=%d", received, totalLen, ret);
+        log_msg("[SERVER HOOK] srv_gameStreamReader: received=%d, totalLen=%d, result=%d", received,
+                totalLen, ret);
     }
 
     return ret;
@@ -557,9 +560,10 @@ static void maybe_set_nodelay(SOCKET s)
     if (getsockopt(s, IPPROTO_TCP, TCP_NODELAY, (char *)&cur, &cbcur) == 0 && cur == one)
         return; // already enabled on this socket handle
     if (setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof(one)) == 0)
-        logf("[NODELAY] socket=%u TCP_NODELAY enabled (Nagle off)", (unsigned)s);
+        log_msg("[NODELAY] socket=%u TCP_NODELAY enabled (Nagle off)", (unsigned)s);
     else
-        logf_rate_limited("nodelay_fail", "[NODELAY] socket=%u setsockopt failed: %d", (unsigned)s, WSAGetLastError());
+        log_msg_rate_limited("nodelay_fail", "[NODELAY] socket=%u setsockopt failed: %d",
+                             (unsigned)s, WSAGetLastError());
 }
 
 /* Harness-only fault injection (HARNESS_TINY_BUFFERS=N): shrink SO_SNDBUF/
@@ -584,7 +588,8 @@ static void maybe_shrink_buffers(SOCKET s)
     int val = tiny;
     setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char *)&val, sizeof(val));
     setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&val, sizeof(val));
-    logf_rate_limited("tiny_buf", "[TINY BUF] socket=%u SO_SNDBUF/SO_RCVBUF set to %d bytes", (unsigned)s, val);
+    log_msg_rate_limited("tiny_buf", "[TINY BUF] socket=%u SO_SNDBUF/SO_RCVBUF set to %d bytes",
+                         (unsigned)s, val);
 }
 
 /* Harness-only payload tracing (HARNESS_NET_TRACE=1): hex-dump the first bytes
@@ -603,7 +608,7 @@ static void maybe_trace_payload(const char *dir, const char *buf, int len)
     for (int i = 0; i < n; i++)
         sprintf(hex + i * 3, "%02X ", (unsigned char)buf[i]);
     hex[n * 3] = '\0';
-    logf("[NET TRACE] %s len=%d: %s", dir, len, hex);
+    log_msg("[NET TRACE] %s len=%d: %s", dir, len, hex);
 }
 
 /**
@@ -630,7 +635,8 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
     // (Original HarryTheBird version passed all params through directly)
     if (!buf || len <= 0)
     {
-        logf("[WS2 HOOK] recv: Suspicious parameters: buf=%p, len=%d (hex=0x%08X)", buf, len, (unsigned int)len);
+        log_msg("[WS2 HOOK] recv: Suspicious parameters: buf=%p, len=%d (hex=0x%08X)", buf, len,
+                (unsigned int)len);
     }
 
     maybe_set_nodelay(s);
@@ -657,12 +663,14 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
             int available = get_available_bytes(s);
             if (available >= 0)
             {
-                logf_rate_limited("recv_wouldblock", "[WS2 HOOK] recv: WSAEWOULDBLOCK, %d bytes available in buffer",
-                                  available);
+                log_msg_rate_limited(
+                    "recv_wouldblock",
+                    "[WS2 HOOK] recv: WSAEWOULDBLOCK, %d bytes available in buffer", available);
             }
             else
             {
-                logf_rate_limited("recv_wouldblock_unknown", "[WS2 HOOK] recv: WSAEWOULDBLOCK, buffer state unknown");
+                log_msg_rate_limited("recv_wouldblock_unknown",
+                                     "[WS2 HOOK] recv: WSAEWOULDBLOCK, buffer state unknown");
             }
 
             // Convert WSAEWOULDBLOCK to 0 for server.dll calls
@@ -674,7 +682,7 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
     }
     else if (result == 0)
     {
-        logf("[WS2 HOOK] recv: Connection gracefully closed by peer on socket %u", (unsigned)s);
+        log_msg("[WS2 HOOK] recv: Connection gracefully closed by peer on socket %u", (unsigned)s);
         log_socket_buffer_info(s);
     }
 
@@ -701,8 +709,9 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
         return real_send(s, buf, len, flags);
     }
 
-    logf_rate_limited("send_called", "[WS2 HOOK] send: called from server.dll: socket=%u, len=%d, flags=0x%X",
-                      (unsigned)s, len, flags);
+    log_msg_rate_limited("send_called",
+                         "[WS2 HOOK] send: called from server.dll: socket=%u, len=%d, flags=0x%X",
+                         (unsigned)s, len, flags);
     maybe_set_nodelay(s);
     maybe_shrink_buffers(s);
     maybe_trace_payload("send", buf, len);
@@ -717,7 +726,8 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
     // (Original HarryTheBird version: while(total < len) exits immediately if len <= 0)
     if (!buf || len <= 0)
     {
-        logf("[WS2 HOOK] send: Suspicious parameters: buf=%p, len=%d (hex=0x%08X)", buf, len, (unsigned int)len);
+        log_msg("[WS2 HOOK] send: Suspicious parameters: buf=%p, len=%d (hex=0x%08X)", buf, len,
+                (unsigned int)len);
     }
 
     int total = 0;
@@ -732,9 +742,10 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
             int error = WSAGetLastError();
             if (error == WSAEWOULDBLOCK)
             {
-                logf_rate_limited("send_wouldblock",
-                                  "[WS2 HOOK] send: WSAEWOULDBLOCK, send buffer likely full (retry %d/%d)",
-                                  retry_count + 1, SEND_MAX_RETRIES);
+                log_msg_rate_limited(
+                    "send_wouldblock",
+                    "[WS2 HOOK] send: WSAEWOULDBLOCK, send buffer likely full (retry %d/%d)",
+                    retry_count + 1, SEND_MAX_RETRIES);
                 HOOK_SLEEP(SEND_RETRY_DELAY_MS);
                 retry_count++;
                 continue;
@@ -751,7 +762,7 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 
         if (sent == 0)
         {
-            logf("[WS2 HOOK] send: Connection closed by peer after %d/%d bytes", total, len);
+            log_msg("[WS2 HOOK] send: Connection closed by peer after %d/%d bytes", total, len);
             return total;
         }
 
@@ -761,8 +772,10 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 
     if (retry_count >= SEND_MAX_RETRIES)
     {
-        logf_rate_limited("send_max_retries",
-                          "[WS2 HOOK] send: Max retries exceeded, sent %d/%d bytes (send buffer full)", total, len);
+        log_msg_rate_limited(
+            "send_max_retries",
+            "[WS2 HOOK] send: Max retries exceeded, sent %d/%d bytes (send buffer full)", total,
+            len);
         log_socket_buffer_info(s);
         WSASetLastError(WSAETIMEDOUT);
         return total > 0 ? total : SOCKET_ERROR;
@@ -802,7 +815,7 @@ const char *get_server_path_from_ini(HMODULE hModule)
 
     if (hModule == NULL)
     {
-        logf("[CONFIG] Module handle is NULL.");
+        log_msg("[CONFIG] Module handle is NULL.");
         return NULL;
     }
 
@@ -810,7 +823,7 @@ const char *get_server_path_from_ini(HMODULE hModule)
     char ini_path[MAX_PATH] = {0};
     if (!get_module_dir(hModule, module_dir) || !PathCombineA(ini_path, module_dir, "game.ini"))
     {
-        logf("[CONFIG] Could not locate game.ini next to module");
+        log_msg("[CONFIG] Could not locate game.ini next to module");
         return NULL;
     }
 
@@ -832,11 +845,11 @@ const char *get_server_path_from_ini(HMODULE hModule)
 
     if (len > 0)
     {
-        logf("[CONFIG] Read server path from game.ini: %s", serverPath);
+        log_msg("[CONFIG] Read server path from game.ini: %s", serverPath);
         return serverPath;
     }
 
-    logf("[CONFIG] Could not find 'ServerPath'/'Server' in '[Network]' section of %s", ini_path);
+    log_msg("[CONFIG] Could not find 'ServerPath'/'Server' in '[Network]' section of %s", ini_path);
     return NULL;
 }
 
@@ -851,23 +864,23 @@ const char *get_server_path_from_ini(HMODULE hModule)
  * @param hook_name Name for logging (e.g., "recv", "send")
  * @return TRUE if hook created successfully, FALSE otherwise
  */
-static BOOL create_hook_api(const wchar_t *module, const char *function, void *hook_func, void **original_func,
-                            const char *hook_name)
+static BOOL create_hook_api(const wchar_t *module, const char *function, void *hook_func,
+                            void **original_func, const char *hook_name)
 {
     if (!module || !function || !hook_func || !original_func)
     {
-        logf("[HOOK] Invalid params for %s hook", hook_name ? hook_name : "(null)");
+        log_msg("[HOOK] Invalid params for %s hook", hook_name ? hook_name : "(null)");
         return FALSE;
     }
     MH_STATUS status = MH_CreateHookApi(module, function, hook_func, original_func);
     if (status == MH_OK)
     {
-        logf("[HOOK] Created %s hook", hook_name);
+        log_msg("[HOOK] Created %s hook", hook_name);
         return TRUE;
     }
     else
     {
-        logf("[HOOK] Failed to create %s hook: %d", hook_name, (int)status);
+        log_msg("[HOOK] Failed to create %s hook: %d", hook_name, (int)status);
         return FALSE;
     }
 }
@@ -885,14 +898,15 @@ static BOOL create_hook_api(const wchar_t *module, const char *function, void *h
 #define EVT_POLL_ADDR ((LPVOID)0x429800)
 #define EVT_TABLE_PTR ((void *volatile *)0x6B7E94)
 /* push ebx; push esi; xor ebx,ebx; xor esi,esi; mov eax,[0x6B7E94]; add eax,esi */
-static const uint8_t evt_poll_sig[] = {0x53, 0x56, 0x33, 0xDB, 0x33, 0xF6, 0xA1, 0x94, 0x7E, 0x6B, 0x00, 0x03, 0xC6};
+static const uint8_t evt_poll_sig[] = {0x53, 0x56, 0x33, 0xDB, 0x33, 0xF6, 0xA1,
+                                       0x94, 0x7E, 0x6B, 0x00, 0x03, 0xC6};
 static void(__cdecl *real_evt_poll)(void) = NULL;
 
 static void __cdecl hook_evt_poll(void)
 {
     if (*EVT_TABLE_PTR == NULL)
     {
-        logf_rate_limited("evt_guard", "[EVT GUARD] evt table NULL, poll skipped");
+        log_msg_rate_limited("evt_guard", "[EVT GUARD] evt table NULL, poll skipped");
         return;
     }
     real_evt_poll();
@@ -917,7 +931,7 @@ static VOID WINAPI       hook_server_sleep(DWORD ms)
 {
     if (ms == 30)
     {
-        logf_rate_limited("fastsync", "[FASTSYNC] server.dll pump Sleep(30) clamped to 1 ms");
+        log_msg_rate_limited("fastsync", "[FASTSYNC] server.dll pump Sleep(30) clamped to 1 ms");
         ms = 1; // keep yielding so the pump thread never busy-spins
     }
     real_server_sleep(ms);
@@ -927,7 +941,7 @@ static void patch_server_sleep_iat(void)
 {
     if (env_opt_out("NETWORKFIX_FASTSYNC"))
     {
-        logf("[FASTSYNC] Disabled via NETWORKFIX_FASTSYNC=0");
+        log_msg("[FASTSYNC] Disabled via NETWORKFIX_FASTSYNC=0");
         return;
     }
 
@@ -943,14 +957,17 @@ static void patch_server_sleep_iat(void)
     const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE)
         return;
-    const IMAGE_DATA_DIRECTORY *dir = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    const IMAGE_DATA_DIRECTORY *dir =
+        &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     if (dir->VirtualAddress == 0 || dir->Size == 0)
         return;
     if ((size_t)dir->VirtualAddress + sizeof(IMAGE_IMPORT_DESCRIPTOR) > g_server_size)
         return;
 
-    const IMAGE_IMPORT_DESCRIPTOR *imp = (const IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress);
-    const IMAGE_IMPORT_DESCRIPTOR *imp_end = (const IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress + dir->Size);
+    const IMAGE_IMPORT_DESCRIPTOR *imp =
+        (const IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress);
+    const IMAGE_IMPORT_DESCRIPTOR *imp_end =
+        (const IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress + dir->Size);
     for (; imp < imp_end && imp->Name != 0; imp++)
     {
         if ((size_t)imp->Name >= g_server_size)
@@ -963,33 +980,37 @@ static void patch_server_sleep_iat(void)
         if ((size_t)imp->OriginalFirstThunk + sizeof(IMAGE_THUNK_DATA) > g_server_size ||
             (size_t)imp->FirstThunk + sizeof(IMAGE_THUNK_DATA) > g_server_size)
             continue;
-        const IMAGE_THUNK_DATA *nameThunk = (const IMAGE_THUNK_DATA *)(base + imp->OriginalFirstThunk);
-        IMAGE_THUNK_DATA       *iatThunk = (IMAGE_THUNK_DATA *)(base + imp->FirstThunk);
+        const IMAGE_THUNK_DATA *nameThunk =
+            (const IMAGE_THUNK_DATA *)(base + imp->OriginalFirstThunk);
+        IMAGE_THUNK_DATA *iatThunk = (IMAGE_THUNK_DATA *)(base + imp->FirstThunk);
         for (; nameThunk->u1.AddressOfData != 0; nameThunk++, iatThunk++)
         {
             if (nameThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)
                 continue;
             if ((size_t)nameThunk->u1.AddressOfData + sizeof(IMAGE_IMPORT_BY_NAME) > g_server_size)
                 continue;
-            const IMAGE_IMPORT_BY_NAME *ibn = (const IMAGE_IMPORT_BY_NAME *)(base + nameThunk->u1.AddressOfData);
+            const IMAGE_IMPORT_BY_NAME *ibn =
+                (const IMAGE_IMPORT_BY_NAME *)(base + nameThunk->u1.AddressOfData);
             if (strcmp((const char *)ibn->Name, "Sleep") != 0)
                 continue;
             DWORD oldProtect;
-            if (!VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function), PAGE_READWRITE, &oldProtect))
+            if (!VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function),
+                                PAGE_READWRITE, &oldProtect))
             {
-                logf("[FASTSYNC] VirtualProtect failed: %lu", GetLastError());
+                log_msg("[FASTSYNC] VirtualProtect failed: %lu", GetLastError());
                 return;
             }
             real_server_sleep = (VOID(WINAPI *)(DWORD))(uintptr_t)iatThunk->u1.Function;
             iatThunk->u1.Function = (uintptr_t)hook_server_sleep;
             g_server_sleep_iat = iatThunk;
-            VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function), oldProtect, &oldProtect);
-            logf("[FASTSYNC] Patched server.dll Sleep IAT slot %p (orig %p)", (void *)&iatThunk->u1.Function,
-                 (void *)real_server_sleep);
+            VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function), oldProtect,
+                           &oldProtect);
+            log_msg("[FASTSYNC] Patched server.dll Sleep IAT slot %p (orig %p)",
+                    (void *)&iatThunk->u1.Function, (void *)real_server_sleep);
             return;
         }
     }
-    logf("[FASTSYNC] server.dll KERNEL32 Sleep import not found — pump throttle left in place");
+    log_msg("[FASTSYNC] server.dll KERNEL32 Sleep import not found — pump throttle left in place");
 }
 
 static void restore_server_sleep_iat(void)
@@ -998,13 +1019,13 @@ static void restore_server_sleep_iat(void)
         return;
 
     DWORD oldProtect;
-    if (VirtualProtect(&g_server_sleep_iat->u1.Function, sizeof(g_server_sleep_iat->u1.Function), PAGE_READWRITE,
-                       &oldProtect))
+    if (VirtualProtect(&g_server_sleep_iat->u1.Function, sizeof(g_server_sleep_iat->u1.Function),
+                       PAGE_READWRITE, &oldProtect))
     {
         g_server_sleep_iat->u1.Function = (uintptr_t)real_server_sleep;
-        VirtualProtect(&g_server_sleep_iat->u1.Function, sizeof(g_server_sleep_iat->u1.Function), oldProtect,
-                       &oldProtect);
-        logf("[FASTSYNC] Restored server.dll Sleep IAT");
+        VirtualProtect(&g_server_sleep_iat->u1.Function, sizeof(g_server_sleep_iat->u1.Function),
+                       oldProtect, &oldProtect);
+        log_msg("[FASTSYNC] Restored server.dll Sleep IAT");
     }
     g_server_sleep_iat = NULL;
     real_server_sleep = NULL;
@@ -1018,20 +1039,20 @@ static BOOL create_evt_guard_hook(void)
 
     uint8_t bytes[sizeof(evt_poll_sig)];
     SIZE_T  n = 0;
-    if (!ReadProcessMemory(GetCurrentProcess(), EVT_POLL_ADDR, bytes, sizeof(bytes), &n) || n != sizeof(bytes) ||
-        memcmp(bytes, evt_poll_sig, sizeof(bytes)) != 0)
+    if (!ReadProcessMemory(GetCurrentProcess(), EVT_POLL_ADDR, bytes, sizeof(bytes), &n) ||
+        n != sizeof(bytes) || memcmp(bytes, evt_poll_sig, sizeof(bytes)) != 0)
     {
-        logf("[EVT GUARD] Signature mismatch at %p, guard not installed", EVT_POLL_ADDR);
+        log_msg("[EVT GUARD] Signature mismatch at %p, guard not installed", EVT_POLL_ADDR);
         return FALSE;
     }
 
     MH_STATUS status = MH_CreateHook(EVT_POLL_ADDR, hook_evt_poll, (void **)&real_evt_poll);
     if (status == MH_OK)
     {
-        logf("[EVT GUARD] Installed evt poll NULL guard at %p", EVT_POLL_ADDR);
+        log_msg("[EVT GUARD] Installed evt poll NULL guard at %p", EVT_POLL_ADDR);
         return TRUE;
     }
-    logf("[EVT GUARD] MH_CreateHook failed: %d", (int)status);
+    log_msg("[EVT GUARD] MH_CreateHook failed: %d", (int)status);
     return FALSE;
 }
 
@@ -1048,20 +1069,22 @@ static BOOL create_hooks(void)
     // Create hook for server.dll function using pre-initialized values
     if (!g_hServerDll || g_server_rva == 0)
     {
-        logf("[HOOK] Server module not properly initialized - cannot create server hook");
+        log_msg("[HOOK] Server module not properly initialized - cannot create server hook");
         success = FALSE;
     }
     else
     {
         void     *targetAddr = (void *)((uintptr_t)g_hServerDll + g_server_rva);
-        MH_STATUS status = MH_CreateHook(targetAddr, hook_srv_gameStreamReader, (void **)&real_srv_gameStreamReader);
+        MH_STATUS status = MH_CreateHook(targetAddr, hook_srv_gameStreamReader,
+                                         (void **)&real_srv_gameStreamReader);
         if (status == MH_OK)
         {
-            logf("[HOOK] Created hook for server function at %p (RVA +0x%X)", targetAddr, g_server_rva);
+            log_msg("[HOOK] Created hook for server function at %p (RVA +0x%X)", targetAddr,
+                    g_server_rva);
         }
         else
         {
-            logf("[HOOK] Failed to create hook for server function: %d", (int)status);
+            log_msg("[HOOK] Failed to create hook for server function: %d", (int)status);
             success = FALSE;
         }
     }
@@ -1069,8 +1092,8 @@ static BOOL create_hooks(void)
     // Create API hooks using helper function
     success &= create_hook_api(L"ws2_32", "recv", hook_recv, (void **)&real_recv, "recv");
     success &= create_hook_api(L"ws2_32", "send", hook_send, (void **)&real_send, "send");
-    success &=
-        create_hook_api(L"kernel32", "GetTickCount", hook_GetTickCount, (void **)&real_GetTickCount, "GetTickCount");
+    success &= create_hook_api(L"kernel32", "GetTickCount", hook_GetTickCount,
+                               (void **)&real_GetTickCount, "GetTickCount");
 
     return success;
 }
@@ -1088,7 +1111,8 @@ BOOL init_hooks(void)
         return TRUE;
     }
 
-    logf("[HOOK] Initialization started (PID: %lu, TID: %lu)", GetCurrentProcessId(), GetCurrentThreadId());
+    log_msg("[HOOK] Initialization started (PID: %lu, TID: %lu)", GetCurrentProcessId(),
+            GetCurrentThreadId());
 
     // A/B baseline: NETWORKFIX_DISABLE=1 keeps the hooks installed but makes
     // them pass through with the original game semantics (see g_fix_active
@@ -1097,7 +1121,8 @@ BOOL init_hooks(void)
     g_fix_active = !env_flag("NETWORKFIX_DISABLE");
     if (!g_fix_active)
     {
-        logf("[HOOK] NETWORKFIX_DISABLE=1: fix behaviour off (hooks pass through, baseline mode)");
+        log_msg(
+            "[HOOK] NETWORKFIX_DISABLE=1: fix behaviour off (hooks pass through, baseline mode)");
     }
 
     // Initialize server.dll module (load, detect version, set up ranges).
@@ -1105,24 +1130,24 @@ BOOL init_hooks(void)
     BOOL server_ok = init_server_module();
     if (!server_ok)
     {
-        logf("[HOOK] Failed to initialize server module, continuing without network hooks");
+        log_msg("[HOOK] Failed to initialize server module, continuing without network hooks");
     }
 
     // Initialize MinHook library using MH_Initialize()
     MH_STATUS status = MH_Initialize();
     if (status != MH_OK)
     {
-        logf("[HOOK] MH_Initialize failed: %d", (int)status);
+        log_msg("[HOOK] MH_Initialize failed: %d", (int)status);
         reset_server_globals();
         return FALSE;
     }
 
-    logf("[HOOK] MinHook initialized successfully");
+    log_msg("[HOOK] MinHook initialized successfully");
 
     // Create hooks (installed regardless of fix state; behaviour is gated inside)
     if (server_ok && !create_hooks())
     {
-        logf("[HOOK] Some hooks failed to create");
+        log_msg("[HOOK] Some hooks failed to create");
         MH_Uninitialize();
         reset_server_globals();
         return FALSE;
@@ -1142,7 +1167,7 @@ BOOL init_hooks(void)
 
     if (!server_ok && !guard_ok)
     {
-        logf("[HOOK] Nothing to hook, MinHook released");
+        log_msg("[HOOK] Nothing to hook, MinHook released");
         MH_Uninitialize();
         reset_server_globals();
         return FALSE;
@@ -1152,12 +1177,12 @@ BOOL init_hooks(void)
     status = MH_EnableHook(MH_ALL_HOOKS);
     if (status == MH_OK)
     {
-        logf("[HOOK] All hooks enabled successfully");
+        log_msg("[HOOK] All hooks enabled successfully");
         g_HooksInitialized = true;
     }
     else
     {
-        logf("[HOOK] Failed to enable hooks: %d", (int)status);
+        log_msg("[HOOK] Failed to enable hooks: %d", (int)status);
         MH_DisableHook(MH_ALL_HOOKS);
         MH_Uninitialize();
         restore_server_sleep_iat();
@@ -1167,9 +1192,9 @@ BOOL init_hooks(void)
 
     // Smoke test - verify GetTickCount hook is working
     DWORD tickCount = GetTickCount();
-    logf("[HOOK] GetTickCount test: %lu", tickCount);
+    log_msg("[HOOK] GetTickCount test: %lu", tickCount);
 
-    logf("[HOOK] Initialization completed successfully");
+    log_msg("[HOOK] Initialization completed successfully");
     return TRUE;
 }
 
@@ -1184,12 +1209,13 @@ void cleanup_hooks(void)
         return;
     }
 
-    logf("[HOOK] Cleanup started");
+    log_msg("[HOOK] Cleanup started");
 
     MH_STATUS disableStatus = MH_DisableHook(MH_ALL_HOOKS);
     MH_STATUS uninitStatus = MH_Uninitialize();
 
-    logf("[HOOK] Cleanup completed (Disable: %d, Uninit: %d)", (int)disableStatus, (int)uninitStatus);
+    log_msg("[HOOK] Cleanup completed (Disable: %d, Uninit: %d)", (int)disableStatus,
+            (int)uninitStatus);
 
     // Restore the Sleep IAT before FreeLibrary so server.dll is left intact
     // if another module still holds a reference.

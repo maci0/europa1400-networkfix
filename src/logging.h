@@ -1,6 +1,7 @@
 #ifndef LOGGING_H
 #define LOGGING_H
 
+// winsock2.h must precede windows.h (mingw warns otherwise)
 #include <stdbool.h>
 #include <stdint.h>
 #include <windows.h>
@@ -20,8 +21,8 @@ extern logging_context g_logctx;
 
 bool                   init_logging(HMODULE hModule);
 void                   close_logging(void);
-void                   logf(const char *fmt, ...);
-void                   logf_rate_limited(const char *key, const char *fmt, ...);
+void                   log_msg(const char *fmt, ...);
+void                   log_msg_rate_limited(const char *key, const char *fmt, ...);
 void                   log_winsock_error(const char *prefix, SOCKET s, int error);
 void                   log_socket_buffer_info(SOCKET s);
 

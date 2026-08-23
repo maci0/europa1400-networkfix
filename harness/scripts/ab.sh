@@ -50,6 +50,8 @@ freeze_client_game() {
   ws=$(docker exec gilde-client sh -c 'pgrep -x wineserver || true' 2>/dev/null || true)
   [[ -n "${ws:-}" ]] && pids="$pids $ws"
   echo "[freeze] SIGSTOP pids=[$pids] for ${FREEZE_S}s" | tee -a "$freeze_log"
+  # SC2086: $pids/$game_pid interpolate a pid list into the remote sh command
+  # shellcheck disable=SC2086
   docker exec gilde-client sh -c "kill -STOP $pids; ps -o pid,stat,comm -p $(echo $pids | tr ' ' ',')" \
     2>&1 | tee -a "$freeze_log" || true
   if ! docker exec gilde-client sh -c "ps -o stat= -p $game_pid" 2>/dev/null | grep -q T; then
@@ -59,6 +61,7 @@ freeze_client_game() {
   fi
   sleep "$FREEZE_S"
   echo "[freeze] SIGCONT pids=[$pids] after ${FREEZE_S}s" | tee -a "$freeze_log"
+  # shellcheck disable=SC2086
   docker exec gilde-client sh -c "kill -CONT $pids; ps -o pid,stat,comm -p $(echo $pids | tr ' ' ',')" \
     2>&1 | tee -a "$freeze_log" || true
 }

@@ -148,7 +148,10 @@ play_town() {
   local n="${1:-20}" wid="$2" i
   local xs="380 560 300 640 460 520 360 600"
   local ys="520 480 600 560 440 620 500 540"
+  # intentional whitespace-split of coordinate lists into arrays
+  # shellcheck disable=SC2086
   set -- $xs; local -a X=("$@")
+  # shellcheck disable=SC2086
   set -- $ys; local -a Y=("$@")
   for i in $(seq 1 "$n"); do
     local k=$(( i % 8 ))

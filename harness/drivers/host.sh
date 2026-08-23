@@ -6,6 +6,7 @@
 # Coordinates: 1152x864 fullscreen, mouse_speed=256 (1:1), rendered y + 43
 # (wine client-area offset) baked in.
 set -uo pipefail
+# shellcheck source-path=SCRIPTDIR
 if [ -f "$(dirname "$0")/common.sh" ]; then . "$(dirname "$0")/common.sh"; fi
 LOG_DIR="${LOG_DIR:-/tmp}"
 LOG="${LOG_DIR}/driver.log"

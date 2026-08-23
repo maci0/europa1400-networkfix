@@ -32,7 +32,7 @@ static DWORD WINAPI init_thread(LPVOID lpParam)
     // Initialize hook system
     if (!init_hooks())
     {
-        logf("[HOOK] Hook initialization failed — game will run without network fix");
+        log_msg("[HOOK] Hook initialization failed — game will run without network fix");
         OutputDebugStringA("[HOOK] Hook initialization failed — running without fix.\n");
         return 1;
     }
@@ -83,7 +83,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
         }
         else
         {
-            logf("[HOOK] Failed to create initialization thread");
+            log_msg("[HOOK] Failed to create initialization thread");
             close_logging();
             return FALSE;
         }
@@ -104,7 +104,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
         }
         if (lpReserved == NULL)
         {
-            logf("[HOOK] DLL detaching from process");
+            log_msg("[HOOK] DLL detaching from process");
             cleanup_hooks();
             close_logging();
         }

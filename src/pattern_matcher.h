@@ -2,6 +2,7 @@
 #define PATTERN_MATCHER_H
 
 #include <windows.h>
+#include <winsock2.h>
 
 /**
  * Result codes for pattern matching operations.

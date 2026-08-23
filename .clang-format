@@ -1,6 +1,7 @@
 BasedOnStyle: Microsoft
 IndentWidth: 4
 UseTab: Never
+ColumnLimit: 100
 AlignConsecutiveDeclarations: AcrossEmptyLines
 AllowShortIfStatementsOnASingleLine: false
 

@@ -3,6 +3,7 @@
 # injection (see host.sh header for why xdotool clicks don't work).
 # Server discovery is LAN broadcast inside gilde-net — no IP entry needed.
 set -uo pipefail
+# shellcheck source-path=SCRIPTDIR
 if [ -f "$(dirname "$0")/common.sh" ]; then . "$(dirname "$0")/common.sh"; fi
 LOG_DIR="${LOG_DIR:-/tmp}"
 LOG="${LOG_DIR}/driver.log"

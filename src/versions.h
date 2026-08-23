@@ -2,6 +2,7 @@
 #define VERSIONS_H
 
 #include <windows.h>
+#include <winsock2.h>
 
 typedef struct
 {

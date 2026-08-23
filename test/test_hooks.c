@@ -27,9 +27,11 @@ extern srv_gameStreamReader_t real_srv_gameStreamReader;
 int __cdecl                   hook_srv_gameStreamReader(int *ctx, int received, int totalLen);
 
 /* pattern_matcher.c internals exposed under NETWORKFIX_TEST */
-long find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size, const unsigned char *needle,
-                            const unsigned char *mask, size_t needle_size);
-BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset, size_t module_size);
+long find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size,
+                            const unsigned char *needle, const unsigned char *mask,
+                            size_t needle_size);
+BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset,
+                                size_t module_size);
 /* sha256.c public API */
 BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t output_size);
 
@@ -41,6 +43,7 @@ HMODULE g_hModule = NULL;
 static int g_sleep_calls = 0;
 void       test_sleep(DWORD ms)
 {
+    (void)ms; // Retry delay is simulated; only the call count matters
     g_sleep_calls++;
 }
 
@@ -157,24 +160,24 @@ static void reset_state(void)
 }
 
 static int g_failures = 0;
-#define CHECK(cond, ...)                                                                                               \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        if (!(cond))                                                                                                   \
-        {                                                                                                              \
-            fprintf(stderr, "  FAIL %s:%d: " #cond "\n    ", __FILE__, __LINE__);                                      \
-            fprintf(stderr, __VA_ARGS__);                                                                              \
-            fprintf(stderr, "\n");                                                                                     \
-            g_failures++;                                                                                              \
-        }                                                                                                              \
+#define CHECK(cond, ...)                                                                           \
+    do                                                                                             \
+    {                                                                                              \
+        if (!(cond))                                                                               \
+        {                                                                                          \
+            fprintf(stderr, "  FAIL %s:%d: " #cond "\n    ", __FILE__, __LINE__);                  \
+            fprintf(stderr, __VA_ARGS__);                                                          \
+            fprintf(stderr, "\n");                                                                 \
+            g_failures++;                                                                          \
+        }                                                                                          \
     } while (0)
 
-#define RUN(name)                                                                                                      \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        printf("[test] %s\n", #name);                                                                                  \
-        reset_state();                                                                                                 \
-        name();                                                                                                        \
+#define RUN(name)                                                                                  \
+    do                                                                                             \
+    {                                                                                              \
+        printf("[test] %s\n", #name);                                                              \
+        reset_state();                                                                             \
+        name();                                                                                    \
     } while (0)
 
 /* ---- Tests ---- */
@@ -190,7 +193,8 @@ static void test_recv_wouldblock_returns_zero(void)
 
     CHECK(r == 0, "expected 0, got %d", r);
     CHECK(WSAGetLastError() == 0, "expected last error cleared, got %d", WSAGetLastError());
-    CHECK(g_recv_script.call_count == 1, "expected 1 real_recv call, got %d", g_recv_script.call_count);
+    CHECK(g_recv_script.call_count == 1, "expected 1 real_recv call, got %d",
+          g_recv_script.call_count);
 }
 
 /* recv: normal data flows through unchanged. */
@@ -214,7 +218,8 @@ static void test_recv_propagates_other_errors(void)
     int  r = hook_recv((SOCKET)1, buf, sizeof(buf), 0);
 
     CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR, got %d", r);
-    CHECK(WSAGetLastError() == WSAECONNRESET, "expected WSAECONNRESET preserved, got %d", WSAGetLastError());
+    CHECK(WSAGetLastError() == WSAECONNRESET, "expected WSAECONNRESET preserved, got %d",
+          WSAGetLastError());
 }
 
 /* send: send buffer full N times, then drains. All bytes sent, retries logged. */
@@ -228,7 +233,8 @@ static void test_send_retries_then_succeeds(void)
 
     CHECK(r == 10, "expected all 10 bytes, got %d", r);
     CHECK(g_sleep_calls == 3, "expected 3 sleeps, got %d", g_sleep_calls);
-    CHECK(g_send_script.total_accepted == 10, "expected 10 bytes accepted, got %d", g_send_script.total_accepted);
+    CHECK(g_send_script.total_accepted == 10, "expected 10 bytes accepted, got %d",
+          g_send_script.total_accepted);
 }
 
 /* send: short writes loop until full payload is delivered. */
@@ -255,7 +261,8 @@ static void test_send_connreset_returns_partial(void)
     int r = hook_send((SOCKET)1, msg, 10, 0);
 
     CHECK(r == 4, "expected partial 4, got %d", r);
-    CHECK(WSAGetLastError() == WSAECONNRESET, "expected WSAECONNRESET preserved, got %d", WSAGetLastError());
+    CHECK(WSAGetLastError() == WSAECONNRESET, "expected WSAECONNRESET preserved, got %d",
+          WSAGetLastError());
 }
 
 /* send: WSAECONNABORTED with zero progress returns SOCKET_ERROR. */
@@ -268,7 +275,8 @@ static void test_send_connaborted_zero_progress(void)
     int r = hook_send((SOCKET)1, msg, 10, 0);
 
     CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR on zero-progress abort, got %d", r);
-    CHECK(WSAGetLastError() == WSAECONNABORTED, "expected WSAECONNABORTED preserved, got %d", WSAGetLastError());
+    CHECK(WSAGetLastError() == WSAECONNABORTED, "expected WSAECONNABORTED preserved, got %d",
+          WSAGetLastError());
 }
 
 /* send: peer-closed (return 0) bails out and returns whatever was already sent. */
@@ -309,9 +317,10 @@ static void test_send_max_retries_zero_progress_returns_timeout(void)
 
     CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR after retry cap, got %d", r);
     CHECK(WSAGetLastError() == WSAETIMEDOUT, "expected WSAETIMEDOUT, got %d", WSAGetLastError());
-    CHECK(g_sleep_calls == SEND_MAX_RETRIES, "expected %d sleeps, got %d", SEND_MAX_RETRIES, g_sleep_calls);
-    CHECK(g_send_script.call_count == SEND_MAX_RETRIES, "expected %d send calls, got %d", SEND_MAX_RETRIES,
-          g_send_script.call_count);
+    CHECK(g_sleep_calls == SEND_MAX_RETRIES, "expected %d sleeps, got %d", SEND_MAX_RETRIES,
+          g_sleep_calls);
+    CHECK(g_send_script.call_count == SEND_MAX_RETRIES, "expected %d send calls, got %d",
+          SEND_MAX_RETRIES, g_send_script.call_count);
 }
 
 /* send: bytes accepted before the stall are still reported; the retry cap
@@ -326,40 +335,41 @@ static void test_send_max_retries_keeps_partial_progress(void)
 
     CHECK(r == 4, "expected partial 4, got %d", r);
     CHECK(WSAGetLastError() == WSAETIMEDOUT, "expected WSAETIMEDOUT, got %d", WSAGetLastError());
-    CHECK(g_sleep_calls == SEND_MAX_RETRIES, "expected %d sleeps after stall, got %d", SEND_MAX_RETRIES, g_sleep_calls);
+    CHECK(g_sleep_calls == SEND_MAX_RETRIES, "expected %d sleeps after stall, got %d",
+          SEND_MAX_RETRIES, g_sleep_calls);
 }
 
 /* send: non-server caller bypasses retry — raw WSAEWOULDBLOCK propagates */
 static void test_send_non_server_passthrough(void)
 {
-    extern BOOL g_test_force_caller_server;
     g_test_force_caller_server = FALSE;
     g_send_script.block_count = 3;
     g_send_script.chunk_size = 10;
     const char *msg = "abcdefghij";
     int         r = hook_send((SOCKET)1, msg, 10, 0);
     CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR on non-server passthrough, got %d", r);
-    CHECK(WSAGetLastError() == WSAEWOULDBLOCK, "expected WSAEWOULDBLOCK preserved, got %d", WSAGetLastError());
+    CHECK(WSAGetLastError() == WSAEWOULDBLOCK, "expected WSAEWOULDBLOCK preserved, got %d",
+          WSAGetLastError());
     CHECK(g_sleep_calls == 0, "expected 0 sleeps on passthrough, got %d", g_sleep_calls);
     g_test_force_caller_server = TRUE;
 }
 
 static void test_recv_non_server_passthrough(void)
 {
-    extern BOOL g_test_force_caller_server;
     g_test_force_caller_server = FALSE;
     g_recv_script.block_count = 1;
     char buf[64];
     int  r = hook_recv((SOCKET)1, buf, sizeof(buf), 0);
     CHECK(r == SOCKET_ERROR, "expected SOCKET_ERROR passthrough, got %d", r);
-    CHECK(WSAGetLastError() == WSAEWOULDBLOCK, "expected WSAEWOULDBLOCK preserved, got %d", WSAGetLastError());
+    CHECK(WSAGetLastError() == WSAEWOULDBLOCK, "expected WSAEWOULDBLOCK preserved, got %d",
+          WSAGetLastError());
     g_test_force_caller_server = TRUE;
 }
 
 /* ---- srv_gameStreamReader mock + tests ---- */
-static int         g_srv_call_count;
-static int         g_srv_return;
-static int         g_srv_set_ctx_e; /* if non-zero, mock writes this into ctx[SRV_CTX_ERROR_INDEX] */
+static int g_srv_call_count;
+static int g_srv_return;
+static int g_srv_set_ctx_e; /* if non-zero, mock writes this into ctx[SRV_CTX_ERROR_INDEX] */
 
 static int __cdecl mock_srv(int *ctx, int received, int totalLen)
 {
@@ -399,7 +409,8 @@ static void test_srv_negative_ctx_e_is_zeroed(void)
     int r = hook_srv_gameStreamReader(ctx, 100, 200);
 
     CHECK(r == 42, "expected return 42, got %d", r);
-    CHECK(ctx[SRV_CTX_ERROR_INDEX] == 0, "expected ctx[SRV_CTX_ERROR_INDEX] zeroed, got %d", ctx[SRV_CTX_ERROR_INDEX]);
+    CHECK(ctx[SRV_CTX_ERROR_INDEX] == 0, "expected ctx[SRV_CTX_ERROR_INDEX] zeroed, got %d",
+          ctx[SRV_CTX_ERROR_INDEX]);
 }
 
 static void test_srv_negative_return_is_zeroed(void)
@@ -434,7 +445,7 @@ static void test_pattern_finds_exact_match(void)
     const unsigned char needle[] = {0x51, 0x8B, 0x4C, 0x24};
     const unsigned char mask[] = {0xFF, 0xFF, 0xFF, 0xFF};
 
-    long                off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
+    long off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
     CHECK(off == 2, "expected offset 2, got %ld", off);
 }
 
@@ -444,7 +455,7 @@ static void test_pattern_returns_minus_one_when_absent(void)
     const unsigned char needle[] = {0x51, 0x8B};
     const unsigned char mask[] = {0xFF, 0xFF};
 
-    long                off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
+    long off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
     CHECK(off == -1, "expected -1, got %ld", off);
 }
 
@@ -455,7 +466,7 @@ static void test_pattern_mask_ignores_wildcards(void)
     const unsigned char needle[] = {0x51, 0x00, 0x4C, 0x24}; /* needle[1] is wildcard */
     const unsigned char mask[] = {0xFF, 0x00, 0xFF, 0xFF};
 
-    long                off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
+    long off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
     CHECK(off == 1, "expected offset 1 with wildcard, got %ld", off);
 }
 
@@ -467,7 +478,8 @@ static void test_pattern_matches_at_region_edges(void)
     const unsigned char mask[] = {0xFF, 0xFF};
 
     const unsigned char head[] = {0x51, 0x8B, 0xDE, 0xAD};
-    CHECK(find_pattern_in_memory(head, sizeof(head), needle, mask, sizeof(needle)) == 0, "expected match at offset 0");
+    CHECK(find_pattern_in_memory(head, sizeof(head), needle, mask, sizeof(needle)) == 0,
+          "expected match at offset 0");
 
     const unsigned char tail[] = {0xDE, 0xAD, 0x51, 0x8B};
     CHECK(find_pattern_in_memory(tail, sizeof(tail), needle, mask, sizeof(needle)) == 2,
@@ -483,7 +495,7 @@ static void test_pattern_rejects_when_haystack_too_small(void)
     const unsigned char needle[] = {0x51, 0x8B};
     const unsigned char mask[] = {0xFF, 0xFF};
 
-    long                off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
+    long off = find_pattern_in_memory(hay, sizeof(hay), needle, mask, sizeof(needle));
     CHECK(off == -1, "expected -1 on undersized haystack, got %ld", off);
 }
 
@@ -495,7 +507,8 @@ static void test_pattern_rejects_null_args(void)
     CHECK(find_pattern_in_memory(NULL, 10, needle, mask, 1) == -1, "expected -1 on NULL haystack");
     CHECK(find_pattern_in_memory(needle, 10, NULL, mask, 1) == -1, "expected -1 on NULL needle");
     CHECK(find_pattern_in_memory(needle, 10, needle, NULL, 1) == -1, "expected -1 on NULL mask");
-    CHECK(find_pattern_in_memory(needle, 10, needle, mask, 0) == -1, "expected -1 on zero needle_size");
+    CHECK(find_pattern_in_memory(needle, 10, needle, mask, 0) == -1,
+          "expected -1 on zero needle_size");
 }
 
 /* ---- validate_function_prologue tests ---- */
@@ -503,7 +516,8 @@ static void test_pattern_rejects_null_args(void)
 /* Build a synthetic function prologue blob.
  * offsets 0..17 prologue bytes, [18..23] JZ, [24..27] body, [28..33] JNZ,
  * remaining bytes filler. JZ/JNZ relative offsets are 32-bit signed. */
-static void build_valid_prologue(unsigned char *blob, size_t blob_size, int32_t jz_rel, int32_t jnz_rel)
+static void build_valid_prologue(unsigned char *blob, size_t blob_size, int32_t jz_rel,
+                                 int32_t jnz_rel)
 {
     memset(blob, 0x90, blob_size); /* NOP filler */
     blob[0] = 0x51;                /* PUSH ECX */
@@ -567,10 +581,12 @@ static void test_validate_rejects_negative_jump_targets(void)
     unsigned char blob[128];
 
     build_valid_prologue(blob, sizeof(blob), -40, 5); /* jz_target = 0 + 23 - 40 < 0 */
-    CHECK(validate_function_prologue(blob, 0, sizeof(blob)) == FALSE, "expected FALSE on negative JZ target");
+    CHECK(validate_function_prologue(blob, 0, sizeof(blob)) == FALSE,
+          "expected FALSE on negative JZ target");
 
     build_valid_prologue(blob, sizeof(blob), 5, -40); /* jnz_target = 0 + 33 - 40 < 0 */
-    CHECK(validate_function_prologue(blob, 0, sizeof(blob)) == FALSE, "expected FALSE on negative JNZ target");
+    CHECK(validate_function_prologue(blob, 0, sizeof(blob)) == FALSE,
+          "expected FALSE on negative JNZ target");
 }
 
 /* ---- SHA256 tests ---- */
@@ -594,8 +610,8 @@ static BOOL make_temp_path(wchar_t *out, size_t out_chars)
 
 static BOOL write_temp_file(const wchar_t *path, const void *data, DWORD size)
 {
-    HANDLE h = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE)
         return FALSE;
     DWORD written = 0;
@@ -628,8 +644,10 @@ static BOOL is_lowercase_hex_64(const char *s)
 static void test_sha256_deterministic_and_collision_free_for_distinct_inputs(void)
 {
     wchar_t p1[MAX_PATH], p2[MAX_PATH];
-    CHECK(write_temp_file_tmp("hello world", 11, p1, MAX_PATH) == TRUE, "could not write temp file p1");
-    CHECK(write_temp_file_tmp("hello world!", 12, p2, MAX_PATH) == TRUE, "could not write temp file p2");
+    CHECK(write_temp_file_tmp("hello world", 11, p1, MAX_PATH) == TRUE,
+          "could not write temp file p1");
+    CHECK(write_temp_file_tmp("hello world!", 12, p2, MAX_PATH) == TRUE,
+          "could not write temp file p2");
 
     char h1[65] = {0}, h1_again[65] = {0}, h2[65] = {0};
     CHECK(calculate_file_sha256(p1, h1, sizeof(h1)) == TRUE, "hash p1 failed");
@@ -678,11 +696,13 @@ static void test_sha256_fips_known_answers(void)
     for (unsigned long i = 0; i < sizeof(vectors) / sizeof(vectors[0]); i++)
     {
         wchar_t path[MAX_PATH];
-        CHECK(write_temp_file_tmp(vectors[i].data, (DWORD)strlen(vectors[i].data), path, MAX_PATH) == TRUE,
+        CHECK(write_temp_file_tmp(vectors[i].data, (DWORD)strlen(vectors[i].data), path,
+                                  MAX_PATH) == TRUE,
               "vector %lu: could not write temp file", i);
 
         char hash[65] = {0};
-        CHECK(calculate_file_sha256(path, hash, sizeof(hash)) == TRUE, "vector %lu: hash failed", i);
+        CHECK(calculate_file_sha256(path, hash, sizeof(hash)) == TRUE, "vector %lu: hash failed",
+              i);
         CHECK(strcmp(hash, vectors[i].hash) == 0, "vector %lu mismatch: got %s", i, hash);
 
         DeleteFileW(path);
@@ -729,7 +749,8 @@ static BOOL write_ini_next_to_exe(const char *contents, char *out_path, size_t o
     if (n < 0 || (size_t)n >= out_path_size)
         return FALSE;
 
-    HANDLE h = CreateFileA(out_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h =
+        CreateFileA(out_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE)
         return FALSE;
     DWORD written = 0;
@@ -745,7 +766,8 @@ static BOOL write_ini_next_to_exe(const char *contents, char *out_path, size_t o
 static void check_ini_value(const char *contents, const char *expected)
 {
     char ini_path[MAX_PATH];
-    CHECK(write_ini_next_to_exe(contents, ini_path, sizeof(ini_path)) == TRUE, "could not write game.ini");
+    CHECK(write_ini_next_to_exe(contents, ini_path, sizeof(ini_path)) == TRUE,
+          "could not write game.ini");
 
     const char *p = get_server_path_from_ini(GetModuleHandleA(NULL));
     if (expected)
@@ -771,7 +793,8 @@ static void test_ini_returns_unquoted_path(void)
 
 static void test_ini_strips_surrounding_quotes(void)
 {
-    check_ini_value("[Network]\r\nServer=\"C:\\path with space\\server.dll\"\r\n", "C:\\path with space\\server.dll");
+    check_ini_value("[Network]\r\nServer=\"C:\\path with space\\server.dll\"\r\n",
+                    "C:\\path with space\\server.dll");
 }
 
 static void test_ini_missing_key_returns_null(void)
@@ -814,8 +837,10 @@ static void test_ini_prefers_serverpath_key(void)
 static void test_is_safe_server_path_rejects_absolute_and_traversal(void)
 {
     CHECK(is_safe_server_path("Server\\server.dll") == TRUE, "relative .dll should be accepted");
-    CHECK(is_safe_server_path("C:\\Guild\\server.dll") == FALSE, "drive-letter path should be rejected");
-    CHECK(is_safe_server_path("\\\\unc\\share\\server.dll") == FALSE, "UNC path should be rejected");
+    CHECK(is_safe_server_path("C:\\Guild\\server.dll") == FALSE,
+          "drive-letter path should be rejected");
+    CHECK(is_safe_server_path("\\\\unc\\share\\server.dll") == FALSE,
+          "UNC path should be rejected");
     CHECK(is_safe_server_path("Server\\..\\server.dll") == FALSE, "traversal should be rejected");
     CHECK(is_safe_server_path("Server\\server.exe") == FALSE, "non-dll should be rejected");
     CHECK(is_safe_server_path("") == FALSE, "empty path should be rejected");
@@ -824,10 +849,13 @@ static void test_is_safe_server_path_rejects_absolute_and_traversal(void)
 
 static void test_path_is_within_dir_requires_separator(void)
 {
-    CHECK(path_is_within_dir("C:\\Guild\\Server\\server.dll", "C:\\Guild") == TRUE, "descendant should match");
+    CHECK(path_is_within_dir("C:\\Guild\\Server\\server.dll", "C:\\Guild") == TRUE,
+          "descendant should match");
     CHECK(path_is_within_dir("C:\\Guild", "C:\\Guild") == TRUE, "exact dir should match");
-    CHECK(path_is_within_dir("C:\\GuildExtra\\server.dll", "C:\\Guild") == FALSE, "prefix sibling must not match");
-    CHECK(path_is_within_dir("C:\\Other\\server.dll", "C:\\Guild") == FALSE, "unrelated dir should not match");
+    CHECK(path_is_within_dir("C:\\GuildExtra\\server.dll", "C:\\Guild") == FALSE,
+          "prefix sibling must not match");
+    CHECK(path_is_within_dir("C:\\Other\\server.dll", "C:\\Guild") == FALSE,
+          "unrelated dir should not match");
     CHECK(path_is_within_dir(NULL, "C:\\Guild") == FALSE, "NULL path should not match");
     CHECK(path_is_within_dir("C:\\Guild\\x.dll", NULL) == FALSE, "NULL dir should not match");
 }
@@ -847,7 +875,8 @@ static void test_ini_empty_legacy_key_returns_null(void)
 /* Empty ServerPath must still let the legacy Server key win. */
 static void test_ini_empty_serverpath_falls_back_to_server_key(void)
 {
-    check_ini_value("[Network]\r\nServerPath=\"\"\r\nServer=legacy\\server.dll\r\n", "legacy\\server.dll");
+    check_ini_value("[Network]\r\nServerPath=\"\"\r\nServer=legacy\\server.dll\r\n",
+                    "legacy\\server.dll");
 }
 
 /* ---- Real server.dll fixture tests ---- */
@@ -870,7 +899,8 @@ static const server_version_info_t *lookup_known_version(const char *hash)
 static void run_fixture_tests(const wchar_t *fixture_path)
 {
     char fixture_path_a[MAX_PATH] = {0};
-    WideCharToMultiByte(CP_ACP, 0, fixture_path, -1, fixture_path_a, sizeof(fixture_path_a), NULL, NULL);
+    WideCharToMultiByte(CP_ACP, 0, fixture_path, -1, fixture_path_a, sizeof(fixture_path_a), NULL,
+                        NULL);
     printf("  fixture: %s\n", fixture_path_a);
 
     char hash[65] = {0};
@@ -891,39 +921,46 @@ static void run_fixture_tests(const wchar_t *fixture_path)
     /* Pattern matcher returns the expected RVA for this version. */
     DWORD                rva = 0;
     PATTERN_MATCH_RESULT r = find_srv_gameStreamReader_by_pattern(h, &rva);
-    CHECK(r == PATTERN_MATCH_SUCCESS, "pattern matcher returned %d (%s)", (int)r, pattern_match_result_to_string(r));
-    CHECK(rva == v->target_rva, "RVA mismatch: got 0x%X, expected 0x%X", (unsigned)rva, (unsigned)v->target_rva);
+    CHECK(r == PATTERN_MATCH_SUCCESS, "pattern matcher returned %d (%s)", (int)r,
+          pattern_match_result_to_string(r));
+    CHECK(rva == v->target_rva, "RVA mismatch: got 0x%X, expected 0x%X", (unsigned)rva,
+          (unsigned)v->target_rva);
 
     /* Prologue heuristic accepts the real bytes at the known RVA. */
     MODULEINFO mi = {0};
-    CHECK(GetModuleInformation(GetCurrentProcess(), h, &mi, sizeof(mi)) != 0, "GetModuleInformation failed: %lu",
-          GetLastError());
+    CHECK(GetModuleInformation(GetCurrentProcess(), h, &mi, sizeof(mi)) != 0,
+          "GetModuleInformation failed: %lu", GetLastError());
     if (mi.SizeOfImage > 0)
     {
-        BOOL ok = validate_function_prologue((const unsigned char *)mi.lpBaseOfDll, v->target_rva, mi.SizeOfImage);
+        BOOL ok = validate_function_prologue((const unsigned char *)mi.lpBaseOfDll, v->target_rva,
+                                             mi.SizeOfImage);
         CHECK(ok == TRUE, "prologue validation failed at RVA 0x%X", (unsigned)v->target_rva);
     }
 
     /* Uniqueness: pattern occurs exactly once. */
     const unsigned char needle[] = {
-        0x51, 0x8B, 0x4C, 0x24, 0x0C, 0x53, 0x55, 0x8B, 0x6C, 0x24, 0x10, 0x56, 0x57, 0x85, 0xED, 0x8B, 0xF1, 0x0F,
-        0x84, 0x00, 0x00, 0x00, 0x00, 0x80, 0x7D, 0x5C, 0x72, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x45, 0x38,
+        0x51, 0x8B, 0x4C, 0x24, 0x0C, 0x53, 0x55, 0x8B, 0x6C, 0x24, 0x10, 0x56,
+        0x57, 0x85, 0xED, 0x8B, 0xF1, 0x0F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x80,
+        0x7D, 0x5C, 0x72, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x45, 0x38,
     };
     const unsigned char mask[] = {
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-        0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
     };
     if (mi.SizeOfImage > 0)
     {
         const unsigned char *base = (const unsigned char *)mi.lpBaseOfDll;
         size_t               size = mi.SizeOfImage;
-        long                 first = find_pattern_in_memory(base, size, needle, mask, sizeof(needle));
+        long first = find_pattern_in_memory(base, size, needle, mask, sizeof(needle));
         CHECK(first >= 0, "first match not found");
         if (first >= 0)
         {
             long step = first + 1;
-            long second = find_pattern_in_memory(base + step, size - step, needle, mask, sizeof(needle));
-            CHECK(second == -1, "pattern matched more than once (second hit at +0x%lX)", first + 1 + second);
+            long second =
+                find_pattern_in_memory(base + step, size - step, needle, mask, sizeof(needle));
+            CHECK(second == -1, "pattern matched more than once (second hit at +0x%lX)",
+                  first + 1 + second);
         }
     }
 
@@ -1029,12 +1066,14 @@ static void test_init_server_module_falls_back_to_default(void)
     char ini_contents[MAX_PATH + 64];
     snprintf(ini_contents, sizeof(ini_contents), "[Network]\r\nServerPath=\"%s\"\r\n", copy_path);
     char ini_path[MAX_PATH];
-    CHECK(write_ini_next_to_exe(ini_contents, ini_path, sizeof(ini_path)) == TRUE, "could not write game.ini");
+    CHECK(write_ini_next_to_exe(ini_contents, ini_path, sizeof(ini_path)) == TRUE,
+          "could not write game.ini");
 
     HMODULE saved_module = g_hModule;
     g_hModule = GetModuleHandleA(NULL);
 
-    CHECK(init_server_module() == TRUE, "init_server_module should succeed via default-path fallback");
+    CHECK(init_server_module() == TRUE,
+          "init_server_module should succeed via default-path fallback");
     CHECK(g_hServerDll != NULL, "expected server module loaded after fallback");
     CHECK(g_server_rva != 0, "expected nonzero RVA after fallback");
 
