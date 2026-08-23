@@ -127,7 +127,6 @@ static size_t    g_server_size = 0;
 // Original function pointers
 HOOK_STATIC int(WSAAPI *real_recv)(SOCKET, char *, int, int) = NULL;
 HOOK_STATIC int(WSAAPI *real_send)(SOCKET, const char *, int, int) = NULL;
-static DWORD(WINAPI *real_GetTickCount)(void) = NULL;
 
 /* Server.dll srv_gameStreamReader function - RVA varies by version */
 typedef int(__cdecl *srv_gameStreamReader_t)(int *ctx, int received, int totalLen);
@@ -466,25 +465,6 @@ BOOL is_caller_from_server(uintptr_t caller_addr)
     // Simple range check: is address within [base, base + size)?
     return (caller_addr >= g_server_base && caller_addr < g_server_base + g_server_size);
 #endif
-}
-
-/**
- * Hook for GetTickCount() Windows API function.
- * Provides fallback behavior in case the original function pointer is invalid.
- *
- * @return Tick count from original function or 0 as fallback
- */
-DWORD WINAPI hook_GetTickCount(void)
-{
-    if (real_GetTickCount)
-    {
-        return real_GetTickCount();
-    }
-    else
-    {
-        log_msg("[SERVER HOOK] GetTickCount was NULL. Falling back to 0");
-        return 0;
-    }
 }
 
 /**
@@ -898,30 +878,29 @@ const char *get_server_path_from_ini(HMODULE hModule)
  * Helper function to create API hooks with consistent logging.
  * Reduces code duplication in hook creation.
  *
- * @param module Module name (L"ws2_32", L"kernel32", etc.)
- * @param function Function name to hook
+ * @param module Module name (L"ws2_32", etc.)
+ * @param function Function name to hook (also used as the log name)
  * @param hook_func Hook function pointer
  * @param original_func Pointer to store original function pointer
- * @param hook_name Name for logging (e.g., "recv", "send")
  * @return TRUE if hook created successfully, FALSE otherwise
  */
 static BOOL create_hook_api(const wchar_t *module, const char *function, void *hook_func,
-                            void **original_func, const char *hook_name)
+                            void **original_func)
 {
     if (!module || !function || !hook_func || !original_func)
     {
-        log_msg("[HOOK] Invalid params for %s hook", hook_name ? hook_name : "(null)");
+        log_msg("[HOOK] Invalid params for %s hook", function ? function : "(null)");
         return FALSE;
     }
     MH_STATUS status = MH_CreateHookApi(module, function, hook_func, original_func);
     if (status == MH_OK)
     {
-        log_msg("[HOOK] Created %s hook", hook_name);
+        log_msg("[HOOK] Created %s hook", function);
         return TRUE;
     }
     else
     {
-        log_msg("[HOOK] Failed to create %s hook: %s (%d)", hook_name, MH_StatusToString(status),
+        log_msg("[HOOK] Failed to create %s hook: %s (%d)", function, MH_StatusToString(status),
                 (int)status);
         return FALSE;
     }
@@ -1141,10 +1120,8 @@ static BOOL create_hooks(void)
     }
 
     // Create API hooks using helper function
-    success &= create_hook_api(L"ws2_32", "recv", hook_recv, (void **)&real_recv, "recv");
-    success &= create_hook_api(L"ws2_32", "send", hook_send, (void **)&real_send, "send");
-    success &= create_hook_api(L"kernel32", "GetTickCount", hook_GetTickCount,
-                               (void **)&real_GetTickCount, "GetTickCount");
+    success &= create_hook_api(L"ws2_32", "recv", hook_recv, (void **)&real_recv);
+    success &= create_hook_api(L"ws2_32", "send", hook_send, (void **)&real_send);
 
     return success;
 }
@@ -1240,10 +1217,6 @@ BOOL init_hooks(void)
         reset_server_globals();
         return FALSE;
     }
-
-    // Smoke test - verify GetTickCount hook is working
-    DWORD tickCount = GetTickCount();
-    log_msg("[HOOK] GetTickCount test: %lu", tickCount);
 
     log_msg("[HOOK] Initialization completed successfully");
     return TRUE;

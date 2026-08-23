@@ -109,11 +109,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
             close_logging();
         }
         break;
-
-    case DLL_THREAD_ATTACH:
-    case DLL_THREAD_DETACH:
-        // No special handling needed for thread attach/detach
-        break;
     }
 
     return TRUE;
