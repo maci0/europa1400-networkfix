@@ -12,6 +12,13 @@ MINHOOK_DIR := vendor/minhook
 # Target is 32-bit only; hde64.c excluded to save ~400 LOC of compile
 MINHOOK_TAG := $(shell git -C $(MINHOOK_DIR) describe --tags --exact-match 2>/dev/null)
 MINHOOK_VERSION := $(if $(MINHOOK_TAG),$(patsubst v%,%,$(MINHOOK_TAG)),unknown)
+# SHA256 tool for dist/verify: coreutils on Linux, Perl shasum on stock macOS.
+ifneq ($(shell command -v sha256sum 2>/dev/null),)
+SHA256SUM := sha256sum
+else
+SHA256SUM := $(shell command -v shasum >/dev/null 2>&1 && echo shasum -a 256)
+endif
+require_sha256 = $(if $(SHA256SUM),,$(error no sha256sum or shasum in PATH; needed by dist/verify))
 MINHOOK_SRCS := $(MINHOOK_DIR)/src/buffer.c \
 $(MINHOOK_DIR)/src/hde/hde32.c \
 $(MINHOOK_DIR)/src/hook.c \
@@ -58,13 +65,14 @@ $(TEST_SRCS)
 
 # Reproducible verify: build twice with fixed SOURCE_DATE_EPOCH
 verify: check-zig
+	$(require_sha256)
 	rm -rf bin/verify1 bin/verify2; mkdir -p bin/verify1 bin/verify2
 	SOURCE_DATE_EPOCH=0 $(MAKE) $(TARGET)
 	cp $(TARGET) bin/verify1/networkfix.asi
 	mkdir -p bin/verify2
 	SOURCE_DATE_EPOCH=0 $(MAKE) $(TARGET)
 	cp $(TARGET) bin/verify2/networkfix.asi
-	sha256sum bin/verify1/networkfix.asi bin/verify2/networkfix.asi
+	$(SHA256SUM) bin/verify1/networkfix.asi bin/verify2/networkfix.asi
 	cmp bin/verify1/networkfix.asi bin/verify2/networkfix.asi && echo "reproducible: OK"
 
 clean:
@@ -85,10 +93,11 @@ sbom:
 	@echo "sbom: $(DIST_DIR)/sbom.json"
 
 dist: check-zig $(TARGET) sbom
+	$(require_sha256)
 	@mkdir -p $(DIST_DIR)
 	@rm -f $(DIST_DIR)/$(DIST_NAME).zip $(DIST_DIR)/$(DIST_NAME).sha256
 	@zip -j $(DIST_DIR)/$(DIST_NAME).zip $(TARGET) LICENSE README.md CHANGELOG.md $(DIST_DIR)/sbom.json >/dev/null
-	@sha256sum $(DIST_DIR)/$(DIST_NAME).zip > $(DIST_DIR)/$(DIST_NAME).sha256
-	@sha256sum $(TARGET) >> $(DIST_DIR)/$(DIST_NAME).sha256
+	@$(SHA256SUM) $(DIST_DIR)/$(DIST_NAME).zip > $(DIST_DIR)/$(DIST_NAME).sha256
+	@$(SHA256SUM) $(TARGET) >> $(DIST_DIR)/$(DIST_NAME).sha256
 	@ls -lh $(DIST_DIR)/$(DIST_NAME).zip $(DIST_DIR)/$(DIST_NAME).sha256
 	@cat $(DIST_DIR)/$(DIST_NAME).sha256
