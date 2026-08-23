@@ -177,7 +177,6 @@ Game Code → recv() → [MinHook Trampoline] → hook_recv()
 - `init_hooks()` - Initialize all hooks
 - `hook_recv()` - Winsock receive hook
 - `hook_send()` - Winsock send hook
-- `hook_GetTickCount()` - Timing function hook (passthrough + NULL fallback)
 - `hook_srv_gameStreamReader()` - Server.dll packet validation hook
 - `is_caller_from_server()` - Detects if caller is from server.dll
 - `patch_server_sleep_iat()` / `restore_server_sleep_iat()` - Fastsync Sleep(30)→1 ms
@@ -291,27 +290,6 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 - `SEND_RETRY_DELAY_MS` - Delay between retries (default: 1 ms)
 
 **Impact:** Handles network buffer congestion gracefully with automatic retries.
-
-### GetTickCount() Hook - Defensive Passthrough
-
-[src/hooks.c](../src/hooks.c) - `hook_GetTickCount()`
-
-**Purpose:** No timing behavior is changed. The hook only guards against a NULL
-original pointer (failed hook setup), which would otherwise crash the game on
-call.
-
-**Solution:**
-```c
-DWORD WINAPI hook_GetTickCount(void)
-{
-    if (real_GetTickCount)
-        return real_GetTickCount();
-    log_msg("[SERVER HOOK] GetTickCount was NULL. Falling back to 0");
-    return 0;
-}
-```
-
-**Current Status:** Passthrough with fallback. Reserved for future timing adjustments if needed.
 
 ### Server Function Hook - Packet Validation Fix
 
@@ -428,8 +406,8 @@ if (is_caller_from_server((uintptr_t)return_addr))
 
 ### Failure Policy: All-or-Nothing Hook Install
 
-If any core hook fails to install (`srv_gameStreamReader`, `recv`, `send`,
-`GetTickCount`), `init_hooks()` tears down everything it created
+If any core hook fails to install (`srv_gameStreamReader`, `recv`,
+`send`), `init_hooks()` tears down everything it created
 (`MH_Uninitialize` + `reset_server_globals`) and reports failure. The game then
 runs completely unpatched rather than with a partial fix, because a half-installed
 set (for example send-retry without the recv `WSAEWOULDBLOCK` conversion) could

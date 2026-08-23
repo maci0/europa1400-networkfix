@@ -139,12 +139,6 @@ if (ret < 0) ret = 0;            // Convert failure to success
 return ret;
 ```
 
-**4. GetTickCount() Hook:**
-```c
-// Ensure consistent timer behavior
-return original_GetTickCount();  // With fallback handling
-```
-
 ## Why This Approach Works
 
 **Surgical fixes:** Only affects the problematic functions, doesn't change game logic

@@ -53,6 +53,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Freezes client game+wineserver on the first host `server.dll` send
   `len>28`. A 25 s freeze on the 128 B payload did not desync either arm.
 
+### Removed
+
+- `hooks.c`: the `GetTickCount` hook. It forwarded to the original
+  unconditionally (no timing behavior changed, per docs/architecture.md) and
+  its NULL-fallback branch was unreachable: a failed hook creation aborts
+  initialization before any hook is enabled. Dropping it removes a pointless
+  trampoline hop on every `GetTickCount` call in the process; the two init log
+  lines that mentioned it are gone with it.
+
 ## [0.3.0] - 2026-08-10
 
 ### Fixed
