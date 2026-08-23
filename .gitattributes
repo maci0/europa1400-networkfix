@@ -1,0 +1,23 @@
+# Normalize all text to LF in the index. The harness scripts are executed
+# inside Linux containers (harness/Dockerfile COPYs them) and the Makefile is
+# consumed by GNU make; CRLF from Windows checkouts (a documented dev platform,
+# see docs/development-guide.md) breaks both with "bad interpreter" / stray \r.
+* text=auto
+
+# POSIX-executed files: force LF in the working tree even on Windows checkouts.
+*.sh text eol=lf
+*.py text eol=lf
+*.lua text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+VERSION text eol=lf
+.gitignore text eol=lf
+.gitmodules text eol=lf
+
+# Binaries must never be normalized.
+*.png binary
+*.mp4 binary
+*.exe binary
+*.dll binary
