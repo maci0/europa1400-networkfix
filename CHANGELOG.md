@@ -31,7 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the TOCTOU post-load hash, dropping one redundant full-file hash per start.
 - `sha256.c`: hash files in 16 KiB chunks instead of 4 KiB, cutting read/hash
   syscalls per file 4x on the startup path.
-
 - `hooks.c`: require a directory separator in the game-dir containment check
   so `C:\Guild` no longer matches `C:\GuildExtra\…`; restore the
   `server.dll` Sleep IAT on unload and on `MH_EnableHook` failure; bound the
@@ -41,9 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the critical section on every `init_logging` failure path.
 - `main.c`: skip join/cleanup on process-exit `DLL_PROCESS_DETACH`
   (`lpReserved != NULL`) to avoid loader deadlocks.
-
-### Changed
-
 - Docs now match the running code: env-var table, relative-only `ServerPath`,
   `NETWORKFIX_DISABLE` as pass-through (not "hooks off"), fastsync independent
   of the disable flag, ASI loading via dxwrapper under Wine, and harness

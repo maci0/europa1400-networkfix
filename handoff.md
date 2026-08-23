@@ -1,7 +1,7 @@
 # Handoff — europa1400-networkfix
 
 ## What this does
-Auto-discovers `server.dll` (pattern `cmp byte [0xE]` + SHA256 in `src/pattern_matcher.c` / `src/versions.c`)
+Auto-discovers the stream-reader function (instruction pattern first, SHA256 fallback; `src/pattern_matcher.c` / `src/versions.c`)
 and patches the two desync vectors (`recv`/`send` WSAEWOULDBLOCK, `srv_gameStreamReader` persistent `ctx[0xE]`).
 Verified against Ghidra/rizin and online sources (Ghidra 0x3720 Steam / 0x3960 GOG, rizin `0x42980D` evt poll).
 Builds reproducible `43418974` (`SOURCE_DATE_EPOCH=0`, Zig 0.16.0).

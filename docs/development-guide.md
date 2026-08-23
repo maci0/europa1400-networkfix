@@ -94,7 +94,7 @@ git submodule update --init --recursive
 # Release build (optimized, no debug symbols)
 make
 
-# Debug build (symbols, verbose logging)
+# Debug build (symbols, no optimization)
 make debug
 
 # Format source code
@@ -165,7 +165,9 @@ europa1400-networkfix/
 │   ├── configuration.md        # Runtime + build-time options
 │   ├── server-dll-versions.md  # Version documentation
 │   └── development-guide.md    # This file
-├── vendor/                     # Third-party dependencies
+├── test/                        # Automated test suite (runs under Wine)
+├── harness/                     # Headless multiplayer testbed (Docker + Wine)
+├── vendor/                      # Third-party dependencies
 │   └── minhook/                # MinHook hooking library
 ├── bin/                        # Build output (created by make)
 ├── Makefile                    # Build configuration
@@ -337,15 +339,17 @@ patch, harness evt guard) log-and-skip on failure.
 
 ### Debug Build
 
-Build with debug symbols and verbose logging:
+Build with debug symbols and no optimization:
 ```bash
 make debug
 ```
 
 This enables:
 - Full debug symbols for debuggers
-- Verbose logging to `hook_log.txt`
 - No optimization (easier to step through)
+
+Logging is identical to the release build; both write every `log_msg()` call to
+`hook_log.txt`.
 
 ### Using a Debugger
 
@@ -454,7 +458,7 @@ case DLL_PROCESS_DETACH:
 
 1. **Build plugin:**
    ```bash
-   make debug  # Use debug for verbose logging
+   make debug  # Symbols for debugging; logging is the same as release
    ```
 
 2. **Install:**
@@ -712,8 +716,9 @@ Get-FileHash server.dll -Algorithm SHA256
 
 Pattern matching is tried first and already covers unknown builds whose
 prologue matches. The SHA256 table is only the fallback when the pattern
-misses. Rebuild and drop the new `server*.dll` next to `bin/test_hooks.exe`
-to exercise the fixture suite.
+misses. Rebuild and drop the new `server*.dll` in the repository root
+(the fixture suite enumerates the working directory) to exercise it via
+`make test`.
 
 **5. Document in server-dll-versions.md:**
 - Add version details

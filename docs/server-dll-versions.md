@@ -136,7 +136,7 @@ This function processes compressed network data using ZLib:
 4. **Compressed Data Handling**: Processes GZIP streams with `zlib_inflate_blocks()`
 5. **Buffer Management**: Manages compressed/uncompressed data buffers
 
-### Key Differences from Steam Version
+### Steam vs GOG Comparison
 
 | Aspect | Steam (0x3720) | GOG (0x3960) |
 |--------|----------------|---------------|
@@ -147,16 +147,19 @@ This function processes compressed network data using ZLib:
 | **Data Processing** | Compressed streams | Compressed streams |
 | **Error Values** | -1, -3 | 0xffffffff (-1), 0xfffffffd (-3) |
 
-### Hook Adaptation Required
+### Hook Behavior on GOG
 
-The GOG version needs the same hook logic but at a different RVA:
+No per-version adaptation is required. The error field sits at byte offset
+0x38 in both editions (`param_1[0xe]` with an `int *` on Steam is the same
+location as `*(int *)((char *)ctx + 0x38)`), so the single shipped hook
+(`ctx[SRV_CTX_ERROR_INDEX]`, defined in `src/hooks.h`) serves both; only the
+RVA differs:
 ```c
-int ret = real_F3960(ctx, buffer, length);
+int ret = real_srv_gameStreamReader(ctx, received, totalLen);
 
-// Reset persistent error states (different offset!)
-int *error_field = (int *)((char *)ctx + 0x38);
-if (*error_field < 0) {
-    *error_field = 0;  // Clear -1/-3 error flags
+// Reset persistent error states (same offset 0x38 = int index 0xE as Steam)
+if (ctx[0xE] < 0) {
+    ctx[0xE] = 0;  // Clear -1/-3 error flags
 }
 
 // Convert failures to success for retry logic
