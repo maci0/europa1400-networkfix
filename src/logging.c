@@ -248,8 +248,8 @@ void log_msg_rate_limited(const char *key, const char *fmt, ...)
 {
     static struct
     {
-        char  key[64];
-        DWORD last_logged;
+        char      key[64];
+        ULONGLONG last_logged;
     } rate_limit_cache[LOG_RATE_LIMIT_SLOTS] = {0};
 
     if (!key || !fmt)
@@ -259,7 +259,10 @@ void log_msg_rate_limited(const char *key, const char *fmt, ...)
     if (!g_logctx.critical_section_initialized)
         return;
 
-    DWORD current_time = GetTickCount();
+    // Elapsed-time measurement: GetTickCount64 never wraps (32-bit
+    // GetTickCount wraps after ~49.7 days uptime, corrupting both the
+    // interval check and the oldest-slot eviction below).
+    ULONGLONG current_time = GetTickCount64();
 
     EnterCriticalSection(&g_logctx.critical_section);
 
