@@ -458,7 +458,7 @@ PATH_STATIC BOOL init_server_module(void)
 BOOL g_test_force_caller_server = TRUE; // test hook to exercise non-server path
 #endif
 
-BOOL is_caller_from_server(uintptr_t caller_addr)
+static BOOL is_caller_from_server(uintptr_t caller_addr)
 {
 #ifdef NETWORKFIX_TEST
     if (!g_test_force_caller_server)
@@ -910,11 +910,6 @@ const char *get_server_path_from_ini(HMODULE hModule)
 static BOOL create_hook_api(const wchar_t *module, const char *function, void *hook_func,
                             void **original_func)
 {
-    if (!module || !function || !hook_func || !original_func)
-    {
-        log_msg("[HOOK] Invalid params for %s hook", function ? function : "(null)");
-        return FALSE;
-    }
     MH_STATUS status = MH_CreateHookApi(module, function, hook_func, original_func);
     if (status == MH_OK)
     {

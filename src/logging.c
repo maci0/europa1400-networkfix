@@ -77,12 +77,6 @@ void log_msg(const char *fmt, ...)
     }
 
     char buffer[LOG_BUFFER_SIZE];
-    // Bounds-checked copy of timestamp
-    if (timestamp_len >= (int)sizeof(buffer))
-    {
-        LeaveCriticalSection(&g_logctx.critical_section);
-        return; // Timestamp too long for buffer
-    }
     memcpy(buffer, timestamp, timestamp_len);
 
     va_list ap;
@@ -391,9 +385,6 @@ bool log_msg_rate_gate(const char *key)
  */
 void log_msg_rate_limited(const char *key, const char *fmt, ...)
 {
-    if (!key || !fmt)
-        return;
-
     // If logging not initialized, bail before touching CS (CS not valid yet)
     if (!g_logctx.critical_section_initialized)
         return;
