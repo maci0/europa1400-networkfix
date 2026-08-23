@@ -23,8 +23,18 @@ CLIENT_DRV="$LOGDIR/client/driver.log"
 
 last_years=-1
 divergent=0
+# Hash stdin portably: coreutils md5sum (Linux, Git Bash) vs md5 -q (stock
+# macOS). Only equality between two peers matters, so any digest works; an
+# empty output (tool missing) would silently disable desync detection.
+hash_stream() {
+  if command -v md5sum >/dev/null 2>&1; then
+    md5sum | cut -d' ' -f1
+  else
+    md5 -q
+  fi
+}
 # season+year strip, centre of the top bar (independent of per-player name/AP)
-grab() { docker exec -e DISPLAY=:99 "gilde-$1" sh -c 'import -window root -crop 300x28+430+14 miff:-' 2>/dev/null | md5sum 2>/dev/null | cut -d' ' -f1; }
+grab() { docker exec -e DISPLAY=:99 "gilde-$1" sh -c 'import -window root -crop 300x28+430+14 miff:-' 2>/dev/null | hash_stream 2>/dev/null; }
 
 while true; do
   if grep -qa '\[endur\] FAIL' "$HOST_DRV" "$CLIENT_DRV" 2>/dev/null; then
