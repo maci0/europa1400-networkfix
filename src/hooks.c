@@ -580,10 +580,12 @@ static void maybe_set_nodelay(SOCKET s)
 }
 
 /* Harness-only fault injection (HARNESS_TINY_BUFFERS=N): shrink SO_SNDBUF/
- * SO_RCVBUF on each server.dll socket to N bytes the first time we see it, so
- * send() hits WSAEWOULDBLOCK constantly during active play. This reproduces
- * the exact desync the fix targets (the original game does not retry a partial
- * send), without needing host kernel netem. Applied once per socket. */
+ * SO_RCVBUF on each server.dll socket to N bytes so send() hits
+ * WSAEWOULDBLOCK constantly during active play. This reproduces the exact
+ * desync the fix targets (the original game does not retry a partial send),
+ * without needing host kernel netem. Re-applied idempotently per call like
+ * maybe_set_nodelay (no getsockopt gate: stacks round socket buffer sizes,
+ * so an equality check against the requested value is unreliable). */
 static void maybe_shrink_buffers(SOCKET s)
 {
     /* Interlocked lazy init: same concurrent-first-call reasoning as
