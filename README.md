@@ -137,7 +137,7 @@ The compiled plugins will be in:
 - **Solutions:**
   - Ensure no antivirus is blocking the plugin
   - Run game as administrator
-  - Check server.dll is the expected version (RVA 0x3720 exists)
+  - Check server.dll is a supported version: compare the `server.dll SHA256` and detected RVA in `hook_log.txt` against [docs/server-dll-versions.md](docs/server-dll-versions.md)
 
 #### Log File Issues
 - **Symptoms:** No logging or partial logs

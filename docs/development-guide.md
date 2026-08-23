@@ -122,8 +122,8 @@ make install
 
 ### Build Output
 
-- **Release:** `bin/networkfix.asi` (~50 KB)
-- **Debug:** `bin/networkfix-debug.asi` (~200 KB)
+- **Release:** `bin/networkfix.asi` (~90 KB)
+- **Debug:** `bin/networkfix-debug.asi` (~900 KB, plus `.pdb` symbols)
 
 ### Build Options
 
@@ -286,14 +286,13 @@ typedef int (WSAAPI *RecvFunc_t)(SOCKET, char*, int, int);
  * function remains callable via the trampoline pointer.
  *
  * @param module Name of DLL containing target function (e.g., L"ws2_32")
- * @param function Name of function to hook (e.g., "recv")
+ * @param function Name of function to hook; also used as the log name
  * @param hook_func Pointer to our hook handler function
  * @param original_func Pointer to store the original function pointer
- * @param hook_name Name for logging (e.g., "recv")
  * @return TRUE if hook created successfully, FALSE otherwise
  */
 static BOOL create_hook_api(const wchar_t *module, const char *function, void *hook_func,
-                            void **original_func, const char *hook_name)
+                            void **original_func)
 {
     // Implementation
 }
@@ -647,7 +646,7 @@ static BOOL create_hooks(void)
     // Create closesocket hook. Core hooks are all-or-nothing: a failure
     // here aborts initialization (see success &= below and init_hooks()).
     success &= create_hook_api(L"ws2_32", "closesocket", hook_closesocket,
-                               (void **)&real_closesocket, "closesocket");
+                               (void **)&real_closesocket);
 
     // ... rest of hook creation ...
 }
@@ -924,14 +923,14 @@ git push origin v1.2.0
 
 ## Harness Prefix: Win32 not WoW64
 
-Europa1400Gold_TL.exe is PE32 — the game runs under **WINEARCH=win32** (not `wow64` experimental). The host stale prefix `GILDE/guild-network-test/wpf1` was built under `win64 wow64` and is stale for this host. `harness/Dockerfile` now `ENV WINEARCH=win32` + `xvfb-run wine wineboot --init` + `wine /tmp/setup.exe /VERYSILENT /DIR=C:\Guild` + `cp /tmp/setup.exe /harness/` to refresh it, and `harness/docker-compose.yml` carries `WINEARCH=win32`. To rebuild a fresh prefix:
+Europa1400Gold_TL.exe is PE32 — the game runs under **WINEARCH=win32**, not the `wow64` experimental mode. `harness/Dockerfile` bakes a fresh prefix with `ENV WINEARCH=win32` + `xvfb-run wine wineboot --init` + `wine /tmp/setup.exe /VERYSILENT /DIR=C:\Guild` + `cp /tmp/setup.exe /harness/`, and `harness/docker-compose.yml` carries `WINEARCH=win32`. To rebuild a fresh prefix:
 
 ```bash
 docker compose -f harness/docker-compose.yml build   # 42s winecfg + setup, 6.62 GB image #arch=win32
 # verify: docker run --rm gilde-harness:latest bash -c 'grep -m1 "#arch" /home/gilde/pfx/system.reg'  # #arch=win32
 ```
 
-The entrypoint `harness/entrypoint.sh` still supports `CLEAN_PREFIX=0/1` to optionally `rm -rf WINEPREFIX && wineboot --init && setup...` per container at `up` time (see `Troubleshooting` for stale `wpf1` symptoms).
+The entrypoint `harness/entrypoint.sh` supports `CLEAN_PREFIX=1` to optionally `rm -rf WINEPREFIX && wineboot --init && setup...` per container at `up` time, which also rules out a stale or wrong-arch prefix as the cause of init failures.
 
 For the game harness run `docker compose -f harness/docker-compose.yml build` then `up --abort-on-container-exit` (fully headless in-container weston + Xwayland `:99 1152x864`, `ffmpeg`, lua-driven lobby via `docker-compose.lua.yml`; optional GPU via `harness/docker-compose.gpu.yml`, A/B baseline via `NETWORKFIX_DISABLE=1`). Videos in `harness/artifacts/` + `harness/logs/`. The headless crash chain and its fixes (i386 GL, RandR modes, ASI loading, evt guard) are in `harness/README.md`.
 

@@ -225,12 +225,10 @@ static int get_available_bytes(SOCKET s)
 }
 
 /**
- * Loads server.dll from the configured path.
- *
- * @param serverPath Path to server.dll to load
- * @return TRUE if loaded successfully, FALSE on error
+ * Gates a game.ini ServerPath value before it is ever handed to LoadLibrary:
+ * relative, no "..", must end in ".dll". Containment inside the game
+ * directory is checked separately in load_server_dll().
  */
-
 PATH_STATIC BOOL is_safe_server_path(const char *path)
 {
     if (!path || !path[0])
@@ -274,6 +272,15 @@ static BOOL get_module_dir(HMODULE hModule, char *out /* [MAX_PATH] */)
     return PathRemoveFileSpecA(out) != FALSE;
 }
 
+/**
+ * Loads server.dll from the configured path after path-safety checks.
+ *
+ * Rejects unsafe paths (is_safe_server_path) and paths whose canonical
+ * form leaves the game directory, then LoadLibraryA's the resolved file.
+ *
+ * @param serverPath Path to server.dll to load
+ * @return TRUE if loaded successfully, FALSE on rejection or load error
+ */
 static BOOL load_server_dll(const char *serverPath)
 {
     log_msg("[HOOK] Loading server.dll from: %s", serverPath);

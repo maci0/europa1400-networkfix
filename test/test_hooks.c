@@ -1,10 +1,13 @@
 /*
- * test_hooks.c: Integration tests for hook_recv / hook_send retry logic.
+ * test_hooks.c: Integration tests for the NETWORKFIX_TEST build.
  *
- * Built only with -DNETWORKFIX_TEST. Drives the real hook functions from
- * src/hooks.c with scripted mock recv/send replacements. Verifies the
- * WSAEWOULDBLOCK retry/conversion behavior end-to-end without needing a
- * running game or MinHook trampolines.
+ * Drives the real code from src/hooks.c (hook_recv/hook_send retry logic,
+ * hook_srv_gameStreamReader clamping, ServerPath parsing and path-safety
+ * helpers), the pattern matcher and prologue validation from
+ * src/pattern_matcher.c, SHA256 hashing from src/sha256.c, and the
+ * known_versions table from src/versions.c. Uses scripted mocks plus
+ * optional real server*.dll fixtures from the repo root; runs under Wine
+ * without a running game or MinHook trampolines.
  */
 
 #define WIN32_LEAN_AND_MEAN

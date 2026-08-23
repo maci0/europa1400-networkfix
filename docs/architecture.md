@@ -12,6 +12,10 @@ This document provides a technical overview of the europa1400-networkfix archite
 - [Version Detection](#version-detection)
 - [Error Handling Strategy](#error-handling-strategy)
 - [Performance Considerations](#performance-considerations)
+- [Security Considerations](#security-considerations)
+- [Future Improvements](#future-improvements)
+- [Harness (xdotool + Lua)](#harness-xdotool--lua)
+- [References](#references)
 
 ## Overview
 
@@ -60,7 +64,7 @@ On a native Windows Gold Edition install the game's ASI loader picks up `.asi` f
 
 ### DllMain Entry Point
 
-[src/main.c:61-120](../src/main.c#L61-L120) (abridged; the real code checks every
+[src/main.c:61-115](../src/main.c#L61-L115) (abridged; the real code checks every
 return value and fails attach when logging or the init thread cannot start):
 
 ```c
@@ -483,10 +487,6 @@ This is a false positive - the code is open source and can be audited.
 2. **Network statistics** - Track packet loss, retries, latency
 3. **Hot-reload configuration** - Change settings without restart
 
-### Harness (xdotool + Lua)
-
-`harness/` is `gilde-net` + fully headless in-container weston + rootful Xwayland `:99 1152x864` (`cur_res=2`; RandR modes the game's init requires; llvmpipe by default, GPU via `docker-compose.gpu.yml`) + `ffmpeg` + lua-driven `drivers/{host,client,common}.sh` (`lua_do` in-process clicks; XTest does not reach submenu buttons) + `lua/`/`luaapi.asi` via `docker-compose.lua.yml` (`harness/LUA_INTEGRATION.md`). ASI loading is done by dxwrapper `LoadPlugins=1` (`d3d8=n,b` override); headless crash chain (`0x42980D`/`0x46B2CC`) root-caused and fixed, see `harness/README.md`.
-
 ### Extension Points
 
 The architecture supports adding:
@@ -494,6 +494,10 @@ The architecture supports adding:
 - Custom network protocols
 - Packet inspection/logging
 - Network simulation for testing
+
+## Harness (xdotool + Lua)
+
+`harness/` is `gilde-net` + fully headless in-container weston + rootful Xwayland `:99 1152x864` (`cur_res=2`; RandR modes the game's init requires; llvmpipe by default, GPU via `docker-compose.gpu.yml`) + `ffmpeg` + lua-driven `drivers/{host,client,common}.sh` (`lua_do` in-process clicks; XTest does not reach submenu buttons) + `lua/`/`luaapi.asi` via `docker-compose.lua.yml` (`harness/LUA_INTEGRATION.md`). ASI loading is done by dxwrapper `LoadPlugins=1` (`d3d8=n,b` override); headless crash chain (`0x42980D`/`0x46B2CC`) root-caused and fixed, see `harness/README.md`.
 
 ## References
 
