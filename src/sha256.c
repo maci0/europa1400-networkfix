@@ -20,18 +20,19 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
         return FALSE;
     }
 
-    logf("[SHA256] Starting hash calculation for file");
+    log_msg("[SHA256] Starting hash calculation for file");
 
     // Open file with permissive sharing to avoid Wine deadlock
-    hFile = CreateFileW(filepath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-                        OPEN_EXISTING, 0, NULL);
+    hFile =
+        CreateFileW(filepath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, OPEN_EXISTING, 0, NULL);
     if (hFile == INVALID_HANDLE_VALUE)
     {
-        logf("[SHA256] Failed to open file, error: %lu", GetLastError());
+        log_msg("[SHA256] Failed to open file, error: %lu", GetLastError());
         return FALSE;
     }
 
-    logf("[SHA256] File opened successfully, handle: %p", (void *)hFile);
+    log_msg("[SHA256] File opened successfully, handle: %p", (void *)hFile);
 
     // Get crypto context - PROV_RSA_AES may be unavailable on older Windows;
     // fall back to PROV_RSA_FULL if needed (both support CALG_SHA_256 on modern systems)
@@ -42,39 +43,40 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
         {
             if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
             {
-                logf("[SHA256] Failed to acquire crypto context (both AES and FULL), error: %lu", GetLastError());
+                log_msg("[SHA256] Failed to acquire crypto context (both AES and FULL), error: %lu",
+                        GetLastError());
                 goto cleanup;
             }
         }
         else
         {
-            logf("[SHA256] Failed to acquire crypto context, error: %lu", err);
+            log_msg("[SHA256] Failed to acquire crypto context, error: %lu", err);
             goto cleanup;
         }
     }
-    logf("[SHA256] Crypto context acquired successfully");
+    log_msg("[SHA256] Crypto context acquired successfully");
 
     // Create hash object
     if (!CryptCreateHash(hProv, CALG_SHA_256, 0, 0, &hHash))
     {
-        logf("[SHA256] Failed to create hash object, error: %lu", GetLastError());
+        log_msg("[SHA256] Failed to create hash object, error: %lu", GetLastError());
         goto cleanup;
     }
-    logf("[SHA256] Hash object created successfully");
+    log_msg("[SHA256] Hash object created successfully");
 
     // Read and hash file in chunks - check ReadFile success to detect I/O errors
     BYTE  buffer[4096];
     DWORD bytesRead;
     DWORD totalBytesRead = 0;
 
-    logf("[SHA256] Starting file read loop");
-    BOOL read_ok = TRUE;
+    log_msg("[SHA256] Starting file read loop");
+    BOOL read_ok;
     while (1)
     {
         read_ok = ReadFile(hFile, buffer, sizeof(buffer), &bytesRead, NULL);
         if (!read_ok)
         {
-            logf("[SHA256] ReadFile failed, error: %lu", GetLastError());
+            log_msg("[SHA256] ReadFile failed, error: %lu", GetLastError());
             goto cleanup;
         }
         if (bytesRead == 0)
@@ -82,11 +84,11 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
         totalBytesRead += bytesRead;
         if (!CryptHashData(hHash, buffer, bytesRead, 0))
         {
-            logf("[SHA256] Failed to hash data chunk, error: %lu", GetLastError());
+            log_msg("[SHA256] Failed to hash data chunk, error: %lu", GetLastError());
             goto cleanup;
         }
     }
-    logf("[SHA256] File read completed, total bytes: %lu", totalBytesRead);
+    log_msg("[SHA256] File read completed, total bytes: %lu", totalBytesRead);
 
     // Get hash result
     BYTE  hashBytes[32]; // SHA256 is 32 bytes
@@ -96,45 +98,46 @@ BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t ou
         // Need 2 chars per byte + terminator
         if (output_size < (size_t)hashSize * 2 + 1)
         {
-            logf("[SHA256] Output buffer too small (%zu bytes, need %lu)", output_size,
-                 (unsigned long)hashSize * 2 + 1);
+            log_msg("[SHA256] Output buffer too small (%zu bytes, need %lu)", output_size,
+                    (unsigned long)hashSize * 2 + 1);
         }
         else
         {
-            logf("[SHA256] Hash calculation successful, converting to hex string");
+            log_msg("[SHA256] Hash calculation successful, converting to hex string");
             for (DWORD i = 0; i < hashSize; i++)
             {
                 sprintf(hash_output + (i * 2), "%02x", hashBytes[i]);
             }
             hash_output[hashSize * 2] = '\0';
             result = TRUE;
-            logf("[SHA256] Hash conversion completed successfully");
+            log_msg("[SHA256] Hash conversion completed successfully");
         }
     }
     else
     {
-        logf("[SHA256] Failed to get hash result, error: %lu", GetLastError());
+        log_msg("[SHA256] Failed to get hash result, error: %lu", GetLastError());
     }
 
 cleanup:
-    logf("[SHA256] Starting cleanup - hash: %p, provider: %p, file: %p", (void *)hHash, (void *)hProv, (void *)hFile);
+    log_msg("[SHA256] Starting cleanup - hash: %p, provider: %p, file: %p", (void *)hHash,
+            (void *)hProv, (void *)hFile);
 
     if (hHash)
     {
         CryptDestroyHash(hHash);
-        logf("[SHA256] Hash object destroyed");
+        log_msg("[SHA256] Hash object destroyed");
     }
     if (hProv)
     {
         CryptReleaseContext(hProv, 0);
-        logf("[SHA256] Crypto context released");
+        log_msg("[SHA256] Crypto context released");
     }
     if (hFile != INVALID_HANDLE_VALUE)
     {
         CloseHandle(hFile);
-        logf("[SHA256] File handle closed");
+        log_msg("[SHA256] File handle closed");
     }
 
-    logf("[SHA256] Cleanup completed, returning: %s", result ? "TRUE" : "FALSE");
+    log_msg("[SHA256] Cleanup completed, returning: %s", result ? "TRUE" : "FALSE");
     return result;
 }

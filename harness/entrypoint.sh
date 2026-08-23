@@ -24,7 +24,7 @@ if [[ "${CLEAN_PREFIX:-0}" != "0" ]]; then
   echo "[entrypoint] CLEAN_PREFIX=1 — fresh prefix" | tee -a "$LOG_DIR/entrypoint.log" 2>&1 || true
   rm -rf "$WINEPREFIX"; mkdir -p "$WINEPREFIX"
   xvfb-run --auto-servernum wine wineboot --init 2>&1 | tail -n 20 | tee -a "$LOG_DIR/entrypoint.log" 2>&1 || true
-  for cand in "/harness/setup_the_guild_gold_2.0.0.5.exe" "/tmp/setup.exe"; do if [[ -f "$cand" ]]; then xvfb-run --auto-servernum wine "$cand" /VERYSILENT /DIR=C:\Guild 2>&1 | tail -n 40 | tee -a "$LOG_DIR/entrypoint.log" 2>&1 || true; break; fi; done
+  for cand in "/harness/setup_the_guild_gold_2.0.0.5.exe" "/tmp/setup.exe"; do if [[ -f "$cand" ]]; then xvfb-run --auto-servernum wine "$cand" /VERYSILENT '/DIR=C:\Guild' 2>&1 | tail -n 40 | tee -a "$LOG_DIR/entrypoint.log" 2>&1 || true; break; fi; done
 fi
 
 # --- traffic control (requires NET_ADMIN, apply to eth0 inside netns) ---
@@ -96,7 +96,7 @@ if [[ "${X_BACKEND:-weston}" == "weston" ]]; then
   mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
   weston --backend=headless-backend.so --renderer=gl --width=1160 --height=880 --socket=wayland-1 >"$LOG_DIR/weston.log" 2>&1 &
   WESTON_PID=$!
-  for i in $(seq 1 50); do [[ -S "$XDG_RUNTIME_DIR/wayland-1" ]] && break; sleep 0.2; done
+  for _attempt in $(seq 1 50); do [[ -S "$XDG_RUNTIME_DIR/wayland-1" ]] && break; sleep 0.2; done
   WAYLAND_DISPLAY=wayland-1 Xwayland "$DISPLAY_NUM" -geometry 1152x864 -ac -noreset >"$XVFB_LOG" 2>&1 &
   XVFB_PID=$!
 else
@@ -104,7 +104,7 @@ else
   Xvfb "$DISPLAY_NUM" -screen 0 1024x768x24 -ac +extension GLX +render -noreset >"$XVFB_LOG" 2>&1 &
   XVFB_PID=$!
 fi
-for i in $(seq 1 30); do xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1 && break; sleep 0.2; done
+for _attempt in $(seq 1 30); do xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1 && break; sleep 0.2; done
 export DISPLAY="$DISPLAY_NUM"
 glxinfo -B 2>/dev/null | grep -E 'renderer string' | tee -a "$LOG_DIR/entrypoint.log" || true
 echo "[entrypoint] DISPLAY=$DISPLAY (XVFB_PID=${XVFB_PID:-none} WESTON_PID=${WESTON_PID:-none})" | tee -a "$LOG_DIR/entrypoint.log"
@@ -121,11 +121,16 @@ fi
 # endurance runs cannot fill the disk with 5-second frames
 MAX_SCREENSHOTS=240
 ( while true; do sleep 5; import -window root "$LOG_DIR/screenshot_$(date +%s).png" 2>/dev/null || true
+    # filenames are machine-generated epoch stamps, no spaces/globs
+    # shellcheck disable=SC2012
     ls -1t "$LOG_DIR"/screenshot_*.png 2>/dev/null | tail -n +$((MAX_SCREENSHOTS + 1)) | xargs -r rm -f || true
 done ) &
 SCREENSHOT_PID=$!
 
-trap 'for _pid in ${FFMPEG_PID:-} ${SCREENSHOT_PID:-}; do kill "$_pid" 2>/dev/null || true; done; sleep 1; exit 0' TERM INT
+# invoked indirectly via trap below
+# shellcheck disable=SC2329
+cleanup() { for _pid in "${FFMPEG_PID:-}" "${SCREENSHOT_PID:-}"; do kill "$_pid" 2>/dev/null || true; done; sleep 1; exit 0; }
+trap cleanup TERM INT
 
 # --- optional lua console (sister project europa1400-lua) — install BEFORE game so ASI autoloads ---
 if [[ "${LUA_CONSOLE:-0}" == "1" && -f "/harness/luaapi.asi" ]]; then
@@ -150,6 +155,8 @@ export WINEDLLOVERRIDES="mscoree,mshtml=;d3d8=n,b"
 
 # Use wineserver -w at end; capture PID via winedbg or just wine
 set +e
+# GAME_ARGS is an intentional multi-token argument list
+# shellcheck disable=SC2086
 wine "$GAME_EXE" ${GAME_ARGS:-} >"$GAME_LOG" 2>&1 &
 GAME_PID=$!
 echo "$GAME_PID" > "$LOG_DIR/wine.pid"

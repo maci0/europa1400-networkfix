@@ -191,7 +191,7 @@ Game Code → recv() → [MinHook Trampoline] → hook_recv()
 
 **Key Functions:**
 - `init_logging()` - Open log file
-- `logf()` - Write formatted log message
+- `log_msg()` - Write formatted log message
 - `close_logging()` - Close and flush log file
 
 ### 4. Pattern Matcher ([src/pattern_matcher.c](../src/pattern_matcher.c), [src/pattern_matcher.h](../src/pattern_matcher.h))
@@ -430,7 +430,7 @@ If a hook fails to install:
 ```c
 if (!create_hook("ws2_32.dll", "recv", hook_recv))
 {
-    logf("[ERROR] Failed to hook recv, continuing anyway");
+    log_msg("[ERROR] Failed to hook recv, continuing anyway");
     // Game continues running
 }
 ```

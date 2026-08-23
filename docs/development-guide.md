@@ -303,14 +303,14 @@ if (ctx[0xE] < 0)
 ```c
 if (MH_Initialize() != MH_OK)
 {
-    logf("[ERROR] MinHook initialization failed");
+    log_msg("[ERROR] MinHook initialization failed");
     return FALSE;
 }
 
 HMODULE hServer = GetModuleHandle("server.dll");
 if (!hServer)
 {
-    logf("[ERROR] Failed to load server.dll");
+    log_msg("[ERROR] Failed to load server.dll");
     return FALSE;
 }
 ```
@@ -327,7 +327,7 @@ if (!init_logging(hModule))
 // Log hook creation failures (but continue)
 if (!create_hook("ws2_32.dll", "recv", hook_recv))
 {
-    logf("[ERROR] Failed to hook recv, continuing anyway");
+    log_msg("[ERROR] Failed to hook recv, continuing anyway");
 }
 ```
 
@@ -396,13 +396,13 @@ All log output goes to `hook_log.txt` in game directory.
 #include "logging.h"
 
 // Simple message
-logf("[HOOK] Hook created successfully");
+log_msg("[HOOK] Hook created successfully");
 
 // Formatted output
-logf("[WS2 HOOK] recv() returned %d bytes, socket %d", bytes, socket);
+log_msg("[WS2 HOOK] recv() returned %d bytes, socket %d", bytes, socket);
 
 // Error with details
-logf("[ERROR] Failed to create hook: %s (error %d)", func_name, GetLastError());
+log_msg("[ERROR] Failed to create hook: %s (error %d)", func_name, GetLastError());
 ```
 
 ### Debugging Hook Issues
@@ -431,7 +431,7 @@ logf("[ERROR] Failed to create hook: %s (error %d)", func_name, GetLastError());
 ```c
 // Add to DLL_PROCESS_DETACH
 case DLL_PROCESS_DETACH:
-    logf("[HOOK] Cleaning up hooks");
+    log_msg("[HOOK] Cleaning up hooks");
     cleanup_hooks();  // Must free all allocated memory
     close_logging();
     break;
@@ -526,7 +526,7 @@ prints `SKIP` and the rest of the run still passes. Fixtures are git-ignored
 - Expose `find_pattern_in_memory` and `validate_function_prologue` for direct
   testing (they are `static` in production builds).
 
-Logging is left wired in. `logf` early-returns when `g_logctx` is uninitialized,
+Logging is left wired in. `log_msg` early-returns when `g_logctx` is uninitialized,
 so the test binary never opens `hook_log.txt`.
 
 **Adding a new test:**
@@ -574,7 +574,7 @@ total_calls++;
 // Log periodically
 if (total_calls % 10000 == 0)
 {
-    logf("[PERF] Avg cycles per call: %llu", total_cycles / total_calls);
+    log_msg("[PERF] Avg cycles per call: %llu", total_cycles / total_calls);
 }
 ```
 
@@ -605,7 +605,7 @@ static ClosesocketFunc_t real_closesocket = NULL;
 int WSAAPI hook_closesocket(SOCKET s)
 {
     // Log the call
-    logf("[WS2 HOOK] closesocket(%d)", s);
+    log_msg("[WS2 HOOK] closesocket(%d)", s);
 
     // Add custom logic here
     // ...
@@ -624,7 +624,7 @@ BOOL init_hooks(void)
     // Create closesocket hook
     if (!create_hook("ws2_32.dll", "closesocket", hook_closesocket, (void**)&real_closesocket))
     {
-        logf("[ERROR] Failed to hook closesocket");
+        log_msg("[ERROR] Failed to hook closesocket");
         // Continue anyway
     }
 
@@ -673,7 +673,7 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
     if (is_caller_from_server((uintptr_t)caller))
     {
         // Custom logic for server.dll
-        logf("[SERVER HOOK] recv() called from server.dll");
+        log_msg("[SERVER HOOK] recv() called from server.dll");
     }
 
     // Call original function
@@ -732,7 +732,7 @@ uint8_t pattern[] = {
 DWORD rva = 0;
 if (find_srv_gameStreamReader_by_pattern(hServer, &rva) == PATTERN_MATCH_SUCCESS)
 {
-    logf("[HOOK] Found function via pattern at RVA 0x%X", rva);
+    log_msg("[HOOK] Found function via pattern at RVA 0x%X", rva);
     return rva;
 }
 ```

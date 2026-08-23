@@ -8,13 +8,11 @@ SCENARIO=""
 SERVICE=""
 CLEAR=false
 STATUS=false
-NETWORK="gilde-net"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --scenario) SCENARIO="$2"; shift 2;;
     --service) SERVICE="$2"; shift 2;;
-    --network) NETWORK="$2"; shift 2;;
     --clear) CLEAR=true; shift;;
     --status) STATUS=true; shift;;
     *) echo "Unknown $1"; exit 1;;
@@ -59,6 +57,8 @@ for svc in "${services[@]}"; do
     sudo nsenter -n -t "$PID" tc qdisc replace dev eth0 root tbf \
       rate "${GC_TBF_RATE:-32kbit}" burst "${GC_TBF_BURST:-4kb}" latency "${GC_TBF_LAT:-400ms}"
   else
+    # ARGS is an intentional multi-token netem qdisc argument list
+    # shellcheck disable=SC2086
     sudo nsenter -n -t "$PID" tc qdisc replace dev eth0 root netem $ARGS
   fi
   sudo nsenter -n -t "$PID" tc qdisc show dev eth0

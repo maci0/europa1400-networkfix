@@ -8,6 +8,9 @@ VERSION_FILE := VERSION
 VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo 0.0.0-dev)
 DIST_DIR := dist
 DIST_NAME := networkfix-$(VERSION)
+# Warnings are errors for all first-party sources; vendored MinHook is
+# compiled without them (upstream code, off-limits to our lint policy).
+WARNFLAGS := -Wall -Wextra -Werror
 MINHOOK_DIR := vendor/minhook
 # Target is 32-bit only; hde64.c excluded to save ~400 LOC of compile
 MINHOOK_TAG := $(shell git -C $(MINHOOK_DIR) describe --tags --exact-match 2>/dev/null)
@@ -23,13 +26,16 @@ MINHOOK_SRCS := $(MINHOOK_DIR)/src/buffer.c \
 $(MINHOOK_DIR)/src/hde/hde32.c \
 $(MINHOOK_DIR)/src/hook.c \
 $(MINHOOK_DIR)/src/trampoline.c
+SHELL_SCRIPTS := harness/entrypoint.sh harness/netem.sh harness/scripts/*.sh harness/drivers/*.sh harness/dxwrapper/fetch.sh
 HDRS := $(wildcard src/*.h) Makefile .clang-format
-SRCS := src/main.c src/hooks.c src/logging.c src/sha256.c src/pattern_matcher.c src/versions.c $(MINHOOK_SRCS)
-TEST_SRCS := test/test_hooks.c src/hooks.c src/logging.c src/sha256.c src/pattern_matcher.c src/versions.c $(MINHOOK_SRCS)
+CORE_SRCS := src/main.c src/hooks.c src/logging.c src/sha256.c src/pattern_matcher.c src/versions.c
+SRCS := $(CORE_SRCS) $(MINHOOK_SRCS)
+TEST_CORE_SRCS := test/test_hooks.c src/hooks.c src/logging.c src/sha256.c src/pattern_matcher.c src/versions.c
+TEST_SRCS := $(TEST_CORE_SRCS) $(MINHOOK_SRCS)
 CFLAGS := -I$(MINHOOK_DIR)/include -Isrc
 LDFLAGS := -lc -lws2_32 -lshlwapi -ladvapi32
 
-.PHONY: all clean install test build-test check-zig format lint verify dist sbom
+.PHONY: all clean install test build-test check-zig format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
 
 check-zig:
 	@$(ZIG) version | grep -q "$(ZIG_VERSION_EXPECTED)" || \
@@ -48,20 +54,23 @@ $(TARGET): $(SRCS) $(HDRS)
 	mkdir -p $(dir $@)
 	$(ZIG) build-lib --name networkfix -femit-bin=$@ -target x86-windows-gnu -dynamic -O ReleaseSmall \
 $(CFLAGS) $(LDFLAGS) \
-$(SRCS)
+$(MINHOOK_SRCS) -cflags $(WARNFLAGS) -- \
+$(CORE_SRCS)
 
 $(DEBUG_TARGET): $(SRCS) $(HDRS)
 	mkdir -p $(dir $@)
 	$(ZIG) build-lib --name networkfix-debug -femit-bin=$@ -target x86-windows-gnu -dynamic -O Debug \
 $(CFLAGS) $(LDFLAGS) \
-$(SRCS)
+$(MINHOOK_SRCS) -cflags $(WARNFLAGS) -- \
+$(CORE_SRCS)
 
 $(TEST_TARGET): $(TEST_SRCS) $(HDRS)
 	mkdir -p $(dir $@)
 	$(ZIG) build-exe --name test_hooks -femit-bin=$@ -target x86-windows-gnu -O Debug \
 -DNETWORKFIX_TEST=1 \
 $(CFLAGS) $(LDFLAGS) \
-$(TEST_SRCS)
+$(MINHOOK_SRCS) -cflags $(WARNFLAGS) -- \
+$(TEST_CORE_SRCS)
 
 # Reproducible verify: build twice with fixed SOURCE_DATE_EPOCH
 verify: check-zig
@@ -83,6 +92,19 @@ format:
 
 lint: format
 	git diff --exit-code src/ test/
+
+# Static analysis over first-party code; both targets must pass with zero
+# findings (inline cppcheck suppressions carry an in-code justification).
+analyze: analyze-cppcheck analyze-shellcheck
+
+analyze-cppcheck:
+	cppcheck --error-exitcode=2 --inline-suppr \
+	--enable=warning,style,portability,performance \
+	--std=c11 --platform=win32A -D_M_IX86=600 -D__GNUC__=4 \
+	-I$(MINHOOK_DIR)/include -Isrc $(CORE_SRCS) test/test_hooks.c
+
+analyze-shellcheck:
+	shellcheck -x $(SHELL_SCRIPTS)
 
 install: $(TARGET)
 	cp $(TARGET) ~/.wine/drive_c/Guild

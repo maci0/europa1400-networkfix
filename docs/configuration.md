@@ -200,7 +200,7 @@ Currently, there are no runtime log levels. All log messages are written.
 
 **To reduce verbosity:**
 1. Use release build: `make` (less verbose than `make debug`)
-2. Comment out specific `logf()` calls in source code
+2. Comment out specific `log_msg()` calls in source code
 3. Rebuild
 
 **Categories in logs:**
@@ -224,7 +224,7 @@ Defined in [src/logging.h:17](../src/logging.h#L17):
 
 **Example usage in code:**
 ```c
-logf_rate_limited("recv_error", "[WS2 HOOK] recv error: %d", error);
+log_msg_rate_limited("recv_error", "[WS2 HOOK] recv error: %d", error);
 ```
 
 Only logs once per 5 seconds even if called thousands of times (see `src/logging.c:215-273`).
@@ -324,7 +324,7 @@ Edit [src/hooks.c](../src/hooks.c) in `detect_server_version()`:
 static DWORD detect_server_version()
 {
     // Force specific RVA (skip detection)
-    logf("[HOOK] Using forced RVA 0x3720");
+    log_msg("[HOOK] Using forced RVA 0x3720");
     return 0x3720;  // Steam version
 
     // Original detection code below...
@@ -440,7 +440,7 @@ static const uint32_t MAX_LOG_LINES = 1000u;  // Smaller log
 
 **Comment out verbose logging in [src/hooks.c](../src/hooks.c):**
 ```c
-// logf("[WS2 HOOK] recv() called");  // Comment out
+// log_msg("[WS2 HOOK] recv() called");  // Comment out
 ```
 
 **Build:**
@@ -456,7 +456,7 @@ If pattern matching fails on GOG version:
 ```c
 static DWORD detect_server_version()
 {
-    logf("[HOOK] Forcing GOG version RVA 0x3960");
+    log_msg("[HOOK] Forcing GOG version RVA 0x3960");
     return 0x3960;  // GOG offset
 }
 ```

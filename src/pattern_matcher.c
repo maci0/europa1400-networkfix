@@ -64,15 +64,16 @@ static const unsigned char SRV_GAMESTREAMREADER_MASK[] = {
  *
  * @return TRUE if the target is within [0, module_size), FALSE otherwise
  */
-static BOOL branch_target_in_bounds(const unsigned char *func_start, size_t opcode_off, DWORD rva_offset,
-                                    size_t module_size)
+static BOOL branch_target_in_bounds(const unsigned char *func_start, size_t opcode_off,
+                                    DWORD rva_offset, size_t module_size)
 {
     int32_t rel;
     memcpy(&rel, func_start + opcode_off + 2, sizeof(rel));
     int64_t target = (int64_t)rva_offset + (int64_t)opcode_off + 6 + (int64_t)rel;
     if (target < 0 || (uint64_t)target >= module_size)
     {
-        logf("[PATTERN] Branch target 0x%X is beyond module bounds (0x%zX)", (DWORD)target, module_size);
+        log_msg("[PATTERN] Branch target 0x%X is beyond module bounds (0x%zX)", (DWORD)target,
+                module_size);
         return FALSE;
     }
     return TRUE;
@@ -89,7 +90,8 @@ static BOOL branch_target_in_bounds(const unsigned char *func_start, size_t opco
  * @return Offset from haystack start if found, or -1 if not found
  */
 PATTERN_STATIC long find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size,
-                                           const unsigned char *needle, const unsigned char *mask, size_t needle_size)
+                                           const unsigned char *needle, const unsigned char *mask,
+                                           size_t needle_size)
 {
     if (!haystack || !needle || !mask || needle_size == 0 || haystack_size < needle_size)
     {
@@ -126,7 +128,8 @@ PATTERN_STATIC long find_pattern_in_memory(const unsigned char *haystack, size_t
  * @param module_size Size of the module for bounds checking
  * @return TRUE if validation passes, FALSE otherwise
  */
-PATTERN_STATIC BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset, size_t module_size)
+PATTERN_STATIC BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset,
+                                               size_t module_size)
 {
     if (rva_offset + 50 >= module_size) // Need at least 50 bytes for validation
     {
@@ -156,7 +159,7 @@ PATTERN_STATIC BOOL validate_function_prologue(const unsigned char *base_addr, D
         return FALSE;
     }
 
-    logf("[PATTERN] Function prologue validation passed at RVA 0x%X", rva_offset);
+    log_msg("[PATTERN] Function prologue validation passed at RVA 0x%X", rva_offset);
     return TRUE;
 }
 
@@ -178,40 +181,42 @@ PATTERN_MATCH_RESULT find_srv_gameStreamReader_by_pattern(HMODULE module_handle,
 
     // Get module information
     MODULEINFO module_info = {0};
-    if (!GetModuleInformation(GetCurrentProcess(), module_handle, &module_info, sizeof(module_info)))
+    if (!GetModuleInformation(GetCurrentProcess(), module_handle, &module_info,
+                              sizeof(module_info)))
     {
-        logf("[PATTERN] Failed to get module information: %lu", GetLastError());
+        log_msg("[PATTERN] Failed to get module information: %lu", GetLastError());
         return PATTERN_MATCH_MODULE_ERROR;
     }
 
-    logf("[PATTERN] Searching for srv_gameStreamReader in module at %p (size: 0x%X)", module_info.lpBaseOfDll,
-         module_info.SizeOfImage);
+    log_msg("[PATTERN] Searching for srv_gameStreamReader in module at %p (size: 0x%X)",
+            module_info.lpBaseOfDll, module_info.SizeOfImage);
 
     const unsigned char *module_base = (const unsigned char *)module_info.lpBaseOfDll;
     size_t               module_size = module_info.SizeOfImage;
 
     // Search for the pattern
-    long pattern_offset = find_pattern_in_memory(module_base, module_size, SRV_GAMESTREAMREADER_PATTERN,
-                                                 SRV_GAMESTREAMREADER_MASK, SRV_GAMESTREAMREADER_PATTERN_SIZE);
+    long pattern_offset =
+        find_pattern_in_memory(module_base, module_size, SRV_GAMESTREAMREADER_PATTERN,
+                               SRV_GAMESTREAMREADER_MASK, SRV_GAMESTREAMREADER_PATTERN_SIZE);
 
     if (pattern_offset == -1)
     {
-        logf("[PATTERN] srv_gameStreamReader pattern not found in module");
+        log_msg("[PATTERN] srv_gameStreamReader pattern not found in module");
         return PATTERN_MATCH_NOT_FOUND;
     }
 
     DWORD rva_offset = (DWORD)pattern_offset;
-    logf("[PATTERN] Found potential srv_gameStreamReader pattern at RVA 0x%X", rva_offset);
+    log_msg("[PATTERN] Found potential srv_gameStreamReader pattern at RVA 0x%X", rva_offset);
 
     // Validate the found pattern
     if (!validate_function_prologue(module_base, rva_offset, module_size))
     {
-        logf("[PATTERN] Pattern validation failed at RVA 0x%X", rva_offset);
+        log_msg("[PATTERN] Pattern validation failed at RVA 0x%X", rva_offset);
         return PATTERN_MATCH_VALIDATION_FAILED;
     }
 
     *found_rva = rva_offset;
-    logf("[PATTERN] Successfully found srv_gameStreamReader at RVA 0x%X", rva_offset);
+    log_msg("[PATTERN] Successfully found srv_gameStreamReader at RVA 0x%X", rva_offset);
 
     return PATTERN_MATCH_SUCCESS;
 }

@@ -1,6 +1,7 @@
 #ifndef HOOKS_H
 #define HOOKS_H
 
+// winsock2.h must precede windows.h (mingw warns otherwise)
 #include <stdbool.h>
 #include <stdint.h>
 #include <windows.h>

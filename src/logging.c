@@ -24,6 +24,9 @@ static const size_t   TIMESTAMP_BUFFER_SIZE = 64; /* Timestamp buffer size */
 /* Distinct rate-limit keys tracked at once; overflow evicts the oldest. */
 #define LOG_RATE_LIMIT_SLOTS 10
 
+/* Last socket whose buffer sizes were logged; dedups repeated log lines. */
+static SOCKET s_last_logged_socket = INVALID_SOCKET;
+
 // Resets the log file by truncating it to zero length.
 // This is called when the log file exceeds the maximum number of lines.
 static void reset_log_file(void)
@@ -38,7 +41,7 @@ static void reset_log_file(void)
 
 // Writes a formatted string to the log file.
 // This function is thread-safe.
-void logf(const char *fmt, ...)
+void log_msg(const char *fmt, ...)
 {
     if (!g_logctx.critical_section_initialized || g_logctx.log_file == INVALID_HANDLE_VALUE)
     {
@@ -55,8 +58,9 @@ void logf(const char *fmt, ...)
     SYSTEMTIME st;
     GetLocalTime(&st);
     char timestamp[TIMESTAMP_BUFFER_SIZE];
-    int  timestamp_len = snprintf(timestamp, sizeof(timestamp), "[%04d-%02d-%02d %02d:%02d:%02d.%03d] ", st.wYear,
-                                  st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    int  timestamp_len =
+        snprintf(timestamp, sizeof(timestamp), "[%04d-%02d-%02d %02d:%02d:%02d.%03d] ", st.wYear,
+                 st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
 
     // Validate timestamp length
     if (timestamp_len < 0 || timestamp_len >= (int)sizeof(timestamp))
@@ -113,8 +117,9 @@ void logf(const char *fmt, ...)
 static char *GetErrorDescription(int errorCode)
 {
     char *buffer = NULL;
-    FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
-                   errorCode, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buffer, 0, NULL);
+    FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL, errorCode, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buffer, 0, NULL);
 
     // Returns NULL if FormatMessageA fails - caller handles this case
     return buffer;
@@ -123,33 +128,35 @@ static char *GetErrorDescription(int errorCode)
 void log_winsock_error(const char *prefix, SOCKET s, int error)
 {
     char *description = GetErrorDescription(error);
+    // cppcheck-suppress knownConditionTrueFalse
+    // False positive: FORMAT_MESSAGE_ALLOCATE_BUFFER writes through &buffer,
+    // which cppcheck cannot model; it assumes buffer stays NULL.
     if (description)
     {
-        logf("%s: %s (%d) on socket %u", prefix, description, error, (unsigned)s);
+        log_msg("%s: %s (%d) on socket %u", prefix, description, error, (unsigned)s);
         LocalFree(description);
     }
     else
     {
-        logf("%s: Unknown error (%d) on socket %u", prefix, error, (unsigned)s);
+        log_msg("%s: Unknown error (%d) on socket %u", prefix, error, (unsigned)s);
     }
 }
 
 void log_socket_buffer_info(SOCKET s)
 {
-    static SOCKET last_logged_socket = INVALID_SOCKET;
-    BOOL          should_log = FALSE;
+    BOOL should_log = FALSE;
 
     if (!g_logctx.critical_section_initialized)
     {
-        // Logging not ready — skip dedup, just log directly (logf will no-op)
+        // Logging not ready — skip dedup, just log directly (log_msg will no-op)
         should_log = TRUE;
     }
     else
     {
         EnterCriticalSection(&g_logctx.critical_section);
-        if (s != last_logged_socket)
+        if (s != s_last_logged_socket)
         {
-            last_logged_socket = s;
+            s_last_logged_socket = s;
             should_log = TRUE;
         }
         LeaveCriticalSection(&g_logctx.critical_section);
@@ -167,7 +174,8 @@ void log_socket_buffer_info(SOCKET s)
     opt_len = sizeof(int);
     getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&send_buf_size, &opt_len);
 
-    logf("[WS2 HOOK] Socket %u: recv_buf=%d, send_buf=%d", (unsigned)s, recv_buf_size, send_buf_size);
+    log_msg("[WS2 HOOK] Socket %u: recv_buf=%d, send_buf=%d", (unsigned)s, recv_buf_size,
+            send_buf_size);
 }
 
 bool init_logging(HMODULE hModule)
@@ -201,8 +209,8 @@ bool init_logging(HMODULE hModule)
         return false;
     }
 
-    g_logctx.log_file =
-        CreateFileW(dllPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    g_logctx.log_file = CreateFileW(dllPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS,
+                                    FILE_ATTRIBUTE_NORMAL, NULL);
 
     if (g_logctx.log_file == INVALID_HANDLE_VALUE)
     {
@@ -211,7 +219,7 @@ bool init_logging(HMODULE hModule)
     }
 
     SetFilePointer(g_logctx.log_file, 0, NULL, FILE_END);
-    logf("[HOOK] DLL attached to process %lu, log: %ls", GetCurrentProcessId(), dllPath);
+    log_msg("[HOOK] DLL attached to process %lu, log: %ls", GetCurrentProcessId(), dllPath);
     return true;
 }
 
@@ -236,7 +244,7 @@ void close_logging(void)
  * Rate-limited logging function to prevent spam.
  * Only logs a message if it hasn't been logged recently.
  */
-void logf_rate_limited(const char *key, const char *fmt, ...)
+void log_msg_rate_limited(const char *key, const char *fmt, ...)
 {
     static struct
     {
@@ -306,5 +314,5 @@ void logf_rate_limited(const char *key, const char *fmt, ...)
     vsnprintf(buffer, sizeof(buffer), fmt, ap);
     va_end(ap);
 
-    logf("%s", buffer);
+    log_msg("%s", buffer);
 }
