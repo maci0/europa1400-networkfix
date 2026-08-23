@@ -1386,6 +1386,68 @@ static void test_rate_gate_admits_then_suppresses(void)
           "suppression must persist across interleaved keys");
 }
 
+/* A record whose body fills the 2048-byte log buffer exactly (26-byte
+ * timestamp + 2021 body bytes = 2047 = buffer size - 1) must still be
+ * written with its trailing newline: there the exact-fit path swaps the
+ * terminating NUL for '\n' instead of dropping the terminator, which would
+ * merge this record with the next one in hook_log.txt. */
+static void test_log_msg_exact_fit_line_terminated(void)
+{
+    open_null_log_once();
+    CHECK(g_logctx.critical_section_initialized == true, "NUL log device unavailable");
+
+    wchar_t path[MAX_PATH];
+    CHECK(make_temp_path(path, MAX_PATH) == TRUE, "could not make temp log path");
+    HANDLE h = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+    CHECK(h != INVALID_HANDLE_VALUE, "could not create temp log file");
+    if (h == INVALID_HANDLE_VALUE)
+    {
+        DeleteFileW(path);
+        return;
+    }
+
+    HANDLE saved_file = g_logctx.log_file;
+    UINT32 saved_count = g_logctx.log_line_count;
+    g_logctx.log_file = h;
+    g_logctx.log_line_count = 0;
+
+    /* Far past the ~2022-char body capacity: forces truncation to an
+     * exact-fit record. */
+    char big[4096];
+    memset(big, 'x', sizeof(big) - 1);
+    big[sizeof(big) - 1] = '\0';
+    log_msg("%s", big); /* exact-fit record: 26 + 2021 body + '\n' = 2048 bytes */
+    log_msg("next");    /* must start on its own line: 26 + 4 + '\n' = 31 bytes */
+
+    g_logctx.log_file = saved_file;
+    g_logctx.log_line_count = saved_count;
+    CloseHandle(h); /* closing flushes pending writes */
+
+    HANDLE rh = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                            OPEN_EXISTING, 0, NULL);
+    if (rh == INVALID_HANDLE_VALUE)
+    {
+        DeleteFileW(path);
+        CHECK(FALSE, "could not reopen temp log file");
+        return;
+    }
+    char  contents[8192];
+    DWORD read_len = 0;
+    BOOL  read_ok = ReadFile(rh, contents, sizeof(contents), &read_len, NULL);
+    CloseHandle(rh);
+    DeleteFileW(path);
+    CHECK(read_ok && read_len > 0, "could not read back log contents");
+
+    CHECK(read_len == 2079, "expected 2079 bytes (2048 + 31), got %lu", (unsigned long)read_len);
+    int newlines = 0;
+    for (DWORD i = 0; i < read_len; i++)
+        if (contents[i] == '\n')
+            newlines++;
+    CHECK(newlines == 2, "expected 2 newline-terminated records, got %d", newlines);
+    CHECK(read_len > 0 && contents[read_len - 1] == '\n', "the final record must end its own line");
+}
+
 int main(void)
 {
     WSADATA wsa;
@@ -1456,6 +1518,7 @@ int main(void)
 
     RUN(test_rate_gate_rejects_null_key);
     RUN(test_rate_gate_admits_then_suppresses);
+    RUN(test_log_msg_exact_fit_line_terminated);
 
     RUN(test_sleep_thunk_found_in_well_formed_image);
     RUN(test_sleep_thunk_matches_dll_name_case_insensitively);
