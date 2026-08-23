@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Static analysis tightened: three more compiler warnings joined the
+  warnings-as-errors set (`-Wnull-dereference`, `-Wfloat-equal`,
+  `-Wdouble-promotion`, all clean across release and test targets), and
+  `make analyze-cppcheck` now also enables the `unusedFunction` checker.
+  New inline suppressions carry justifications: `DllMain` is loader-called,
+  and the `test_sleep`/`test_pump_messages` hooks are only called under
+  `NETWORKFIX_TEST`, which analysis intentionally does not define.
 - `hooks.c`, `logging.c`: the recv WSAEWOULDBLOCK diagnostic no longer issues
   an `ioctlsocket` probe per poll tick just to feed a rate-limited log line.
   A new `log_msg_rate_gate` lets callers ask the limiter whether a message is
