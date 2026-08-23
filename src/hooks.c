@@ -23,11 +23,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-#if defined(_MSC_VER)
-#include <intrin.h>
-#pragma intrinsic(_ReturnAddress)
-#define CALLER_IP() _ReturnAddress()
-#elif defined(__clang__) || defined(__GNUC__)
+// Build is clang-based (zig cc, x86-windows-gnu); anything else fails here.
+#if defined(__clang__) || defined(__GNUC__)
 #define CALLER_IP() __builtin_extract_return_addr(__builtin_return_address(0))
 #else
 #error Unsupported compiler
@@ -216,6 +213,9 @@ PATH_STATIC void reset_server_globals(void)
 
 /**
  * Gets the number of bytes available to read from socket.
+ *
+ * @return Available bytes according to FIONREAD, or -1 if the probe fails
+ *         (callers treat -1 as "unknown", not as "empty")
  */
 static int get_available_bytes(SOCKET s)
 {
@@ -976,6 +976,17 @@ static VOID WINAPI       hook_server_sleep(DWORD ms)
     real_server_sleep(ms);
 }
 
+/* True iff the byte range [offset, offset+len) lies inside a module of
+ * module_size bytes. Untrusted 32-bit PE fields are widened to 64-bit BEFORE
+ * the addition: on this 32-bit build size_t arithmetic would wrap near 2^32
+ * and let a crafted header field (e.g. e_lfanew just below 2^32) pass a check
+ * like "offset + struct_size > image_size" while actually pointing ~4 GB
+ * outside the mapping. Negative offsets (signed LONG fields) are rejected. */
+static BOOL pe_range_in_module(int64_t offset, uint64_t len, size_t module_size)
+{
+    return offset >= 0 && (uint64_t)offset + len <= (uint64_t)module_size;
+}
+
 /* Bounded compare of a string embedded in the mapped PE image against a
  * literal. Import-table strings are untrusted bytes: a corrupt image may omit
  * the NUL terminator, and strcmp/_stricmp would chase it past the end of the
@@ -1006,7 +1017,9 @@ HOOK_STATIC IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
     const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)base;
     if (g_server_size < sizeof(IMAGE_DOS_HEADER) || dos->e_magic != IMAGE_DOS_SIGNATURE)
         return NULL;
-    if ((size_t)dos->e_lfanew + sizeof(IMAGE_NT_HEADERS) > g_server_size)
+    /* e_lfanew is a signed LONG: negatives must fail here, not wrap into a
+     * small size_t below. */
+    if (!pe_range_in_module(dos->e_lfanew, sizeof(IMAGE_NT_HEADERS), g_server_size))
         return NULL;
     const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE)
@@ -1015,7 +1028,7 @@ HOOK_STATIC IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
         &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     /* The whole descriptor array must fit: imp_end below derives from dir->Size. */
     if (dir->VirtualAddress == 0 || dir->Size < sizeof(IMAGE_IMPORT_DESCRIPTOR) ||
-        (size_t)dir->VirtualAddress + dir->Size > g_server_size)
+        !pe_range_in_module(dir->VirtualAddress, dir->Size, g_server_size))
         return NULL;
 
     const IMAGE_IMPORT_DESCRIPTOR *imp =
@@ -1030,8 +1043,8 @@ HOOK_STATIC IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
             continue;
         if (imp->OriginalFirstThunk == 0 || imp->FirstThunk == 0)
             continue;
-        if ((size_t)imp->OriginalFirstThunk + sizeof(IMAGE_THUNK_DATA) > g_server_size ||
-            (size_t)imp->FirstThunk + sizeof(IMAGE_THUNK_DATA) > g_server_size)
+        if (!pe_range_in_module(imp->OriginalFirstThunk, sizeof(IMAGE_THUNK_DATA), g_server_size) ||
+            !pe_range_in_module(imp->FirstThunk, sizeof(IMAGE_THUNK_DATA), g_server_size))
             continue;
         const IMAGE_THUNK_DATA *nameThunk =
             (const IMAGE_THUNK_DATA *)(base + imp->OriginalFirstThunk);
@@ -1053,7 +1066,8 @@ HOOK_STATIC IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
                 break;
             if (nameThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)
                 continue;
-            if ((size_t)nameThunk->u1.AddressOfData + sizeof(IMAGE_IMPORT_BY_NAME) > g_server_size)
+            if (!pe_range_in_module(nameThunk->u1.AddressOfData, sizeof(IMAGE_IMPORT_BY_NAME),
+                                    g_server_size))
                 continue;
             const IMAGE_IMPORT_BY_NAME *ibn =
                 (const IMAGE_IMPORT_BY_NAME *)(base + nameThunk->u1.AddressOfData);

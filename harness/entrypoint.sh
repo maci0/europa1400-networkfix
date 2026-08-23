@@ -89,7 +89,9 @@ fi
 # llvmpipe otherwise) | xvfb (debug only; game init fails without RandR modes) ---
 XVFB_LOG="$LOG_DIR/xvfb.log"
 WESTON_PID=""
-chmod 777 /tmp 2>/dev/null || true; rm -f /tmp/.X99-lock /tmp/.X98-lock 2>/dev/null || true
+# 1777 keeps /tmp's sticky bit: X lock/socket files there must not be
+# clobberable across users, and a plain 777 would strip that protection.
+chmod 1777 /tmp 2>/dev/null || true; rm -f /tmp/.X99-lock /tmp/.X98-lock 2>/dev/null || true
 if [[ "${X_BACKEND:-weston}" == "weston" ]]; then
   echo "[entrypoint] Starting weston headless + Xwayland $DISPLAY_NUM (1152x864)" | tee -a "$LOG_DIR/entrypoint.log"
   export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg}"
@@ -191,11 +193,15 @@ echo "[entrypoint] Waiting for game (tail hook_log)..." | tee -a "$LOG_DIR/entry
   done ) &
 TAIL_PID=$!
 
-wait "$GAME_PID" || true
+# set +e is active: capture the game's real exit status (a plain wait would
+# trip errexit; || true here would clobber $? and always report success).
+wait "$GAME_PID"
 GAME_EXIT=$?
 echo "[entrypoint] Game exited code=$GAME_EXIT" | tee -a "$LOG_DIR/entrypoint.log"
 kill "$TAIL_PID" 2>/dev/null || true
 if [[ -n "${DRIVER_PID:-}" ]]; then kill "$DRIVER_PID" 2>/dev/null || true; fi
+# Stop the recording helpers the TERM/INT trap would otherwise miss on this path
+for _pid in "${FFMPEG_PID:-}" "${SCREENSHOT_PID:-}"; do kill "$_pid" 2>/dev/null || true; done
 
 # Final logs
 if [[ -f "$HOOK_LOG" ]]; then

@@ -1141,6 +1141,36 @@ static void test_sleep_thunk_sentinel_outside_view_returns_null(void)
     teardown_walker();
 }
 
+/* Bounds arithmetic must be wrap-safe: a crafted 32-bit header field near 2^32
+ * must not overflow the "offset + struct size" sum back below the image size
+ * and send the walk ~4 GB outside the mapped view. */
+static void test_sleep_thunk_rejects_e_lfanew_wrap(void)
+{
+    build_fake_pe("KERNEL32.dll", "Sleep");
+    /* 0xFFFFFF58 + sizeof(IMAGE_NT_HEADERS)=248 wraps to 80 <= image size on a
+     * 32-bit size_t; as a signed LONG it is also negative (before the base). */
+    ((IMAGE_DOS_HEADER *)(g_fake_pe + FP_DOS_OFF))->e_lfanew = (LONG)0xFFFFFF58;
+    setup_walker();
+    CHECK(find_kernel32_sleep_thunk() == NULL,
+          "expected NULL when e_lfanew + NT header size wraps 32-bit");
+    teardown_walker();
+}
+
+static void test_sleep_thunk_rejects_import_dir_wrap(void)
+{
+    build_fake_pe("KERNEL32.dll", "Sleep");
+    /* 0xFFFFFF00 + 0x200 wraps to 0x100 <= image size on a 32-bit size_t;
+     * the old check passed and dereferenced base+VirtualAddress out of view. */
+    IMAGE_DATA_DIRECTORY *dir = &((IMAGE_NT_HEADERS *)(g_fake_pe + FP_NT_OFF))
+                                     ->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    dir->VirtualAddress = 0xFFFFFF00u;
+    dir->Size = 0x200;
+    setup_walker();
+    CHECK(find_kernel32_sleep_thunk() == NULL,
+          "expected NULL when VirtualAddress + Size wraps 32-bit");
+    teardown_walker();
+}
+
 /* ---- Real server.dll fixture tests ---- */
 
 /* Looks up a hash in known_versions[]. Returns matching entry or NULL. */
@@ -1532,6 +1562,8 @@ int main(void)
     RUN(test_sleep_thunk_rejects_unterminated_dll_name);
     RUN(test_sleep_thunk_rejects_rva_past_module_end);
     RUN(test_sleep_thunk_sentinel_outside_view_returns_null);
+    RUN(test_sleep_thunk_rejects_e_lfanew_wrap);
+    RUN(test_sleep_thunk_rejects_import_dir_wrap);
 
     WSACleanup();
 

@@ -64,7 +64,7 @@ On a native Windows Gold Edition install the game's ASI loader picks up `.asi` f
 
 ### DllMain Entry Point
 
-[src/main.c:61-115](../src/main.c#L61-L115) (abridged; the real code checks every
+[src/main.c:63-114](../src/main.c#L63-L114) (abridged; the real code checks every
 return value and fails attach when logging or the init thread cannot start):
 
 ```c
@@ -384,11 +384,13 @@ BOOL is_caller_from_server(uintptr_t a){
 
 **Usage:**
 ```c
-// In hook function, get return address
-void *return_addr = _ReturnAddress();
+// In hook function, get the return address. CALLER_IP() wraps
+// __builtin_return_address(0); the build is clang-based (zig cc) and
+// errors out on any other compiler.
+void *caller = CALLER_IP();
 
 // Only apply special logic for server.dll calls
-if (is_caller_from_server((uintptr_t)return_addr))
+if (is_caller_from_server((uintptr_t)caller))
 {
     // Apply network fix
 }
@@ -410,6 +412,7 @@ if (is_caller_from_server((uintptr_t)return_addr))
 - `[CONFIG]` - game.ini parsing
 - `[PATTERN]` / `[SHA256]` - Version detection details
 - `[NODELAY]` / `[FASTSYNC]` - Socket and pump-timing fixes
+- `[TINY BUF]` / `[NET TRACE]` / `[EVT GUARD]` - Harness-only diagnostics
 
 ### Failure Policy: All-or-Nothing Hook Install
 
@@ -443,7 +446,7 @@ Each hooked function adds minimal overhead:
 ### Memory Footprint
 
 - Plugin DLL: ~50-100 KB
-- Hook trampolines: ~100 bytes per hook × 4 hooks = ~400 bytes
+- Hook trampolines: ~100 bytes per hook (3 core hooks, plus the harness evt guard when enabled)
 - Runtime state: <1 KB
 - Total overhead: <200 KB
 

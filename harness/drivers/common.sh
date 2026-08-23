@@ -179,6 +179,3 @@ wait_window() {
   done
   return 1
 }
-has_pil() { python3 -c "import PIL" 2>/dev/null; }
-# Exponential backoff sleep that is interruptible
-backoff_sleep() { sleep "${1:-1}"; }

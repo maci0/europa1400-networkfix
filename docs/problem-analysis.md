@@ -117,7 +117,7 @@ if (error == WSAEWOULDBLOCK) {
 **2. send() Hook:**
 ```c
 // Add retry logic for partial sends
-while (total < len && retry_count < MAX_RETRIES) {
+while (total < len && retry_count < SEND_MAX_RETRIES) {
     sent = real_send(s, buf + total, len - total, flags);
     if (sent == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) {
         Sleep(1);              // Brief pause

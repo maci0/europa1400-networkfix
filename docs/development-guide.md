@@ -409,6 +409,7 @@ All log output goes to `hook_log.txt` in game directory.
 - `[CONFIG]` - Configuration file parsing
 - `[PATTERN]` / `[SHA256]` - Version detection
 - `[NODELAY]` / `[FASTSYNC]` - Socket and pump-timing fixes
+- `[TINY BUF]` / `[NET TRACE]` / `[EVT GUARD]` - Harness-only diagnostics
 
 **Add logging:**
 ```c
@@ -686,8 +687,9 @@ Only apply hooks to specific callers:
 ```c
 int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
 {
-    // Get caller address
-    void *caller = _ReturnAddress();
+    // Get caller address. CALLER_IP() wraps __builtin_return_address(0);
+    // the build is clang-based (zig cc) and errors out on other compilers.
+    void *caller = CALLER_IP();
 
     // Only apply fix for server.dll calls
     if (is_caller_from_server((uintptr_t)caller))

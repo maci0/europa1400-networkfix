@@ -136,7 +136,7 @@ Defined in [src/hooks.h:14-15](../src/hooks.h#L14-L15) (shared with the test sui
 
 ### Default Server Path
 
-Defined in [src/hooks.c:38](../src/hooks.c#L38):
+Defined in [src/hooks.c:35](../src/hooks.c#L35):
 
 ```c
 #define DEFAULT_SERVER_PATH "Server\\server.dll"
@@ -315,7 +315,7 @@ BOOL is_caller_from_server(uintptr_t caller_addr)
 2. Remove `is_caller_from_server()` checks
 3. Rebuild
 
-**Warning:** Disabling selective hooking affects all network operations system-wide, not just the game.
+**Warning:** Disabling selective hooking applies the fixes to every `recv`/`send` call in the game process, not just server.dll's.
 
 ### Version Detection Priority
 
