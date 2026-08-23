@@ -870,11 +870,13 @@ git tag -a v1.2.0 -m "Release version 1.2.0"
 git push origin v1.2.0
 ```
 
-**5. GitHub Release:**
-- Create release from tag
-- Upload `bin/networkfix.asi`
+**5. GitHub Release (automated by CI on tag push):**
+- CI runs `make dist` and attaches `bin/networkfix.asi`, `networkfix-<version>.zip`, and `networkfix-<version>.sha256`
+- The zip embeds LICENSE, README, CHANGELOG, and the CycloneDX SBOM (`sbom.json`)
+- Build provenance is attested automatically via `actions/attest-build-provenance` (SLSA)
 - Write release notes
-- Include SHA256 hash of .asi file
+
+To package locally instead: `make dist` (requires `zip`); outputs land in `dist/`.
 
 **6. Announce:**
 - Update GitHub README
@@ -891,7 +893,7 @@ git push origin v1.2.0
 - [ ] Documentation updated
 - [ ] Git tag created
 - [ ] GitHub release created
-- [ ] Binary SHA256 hash provided
+- [ ] Checksums and SBOM attached (automatic via `make dist` in CI)
 - [ ] Release notes written
 - [ ] Announcement posted
 
