@@ -28,12 +28,14 @@ BOOL is_caller_from_server(uintptr_t caller_addr);
 #ifdef NETWORKFIX_TEST
 extern BOOL g_test_force_caller_server;
 /* Internals exposed so the Wine test suite can drive them directly. */
-BOOL           is_safe_server_path(const char *path);
-BOOL           path_is_within_dir(const char *path, const char *dir);
-BOOL           init_server_module(void);
-void           reset_server_globals(void);
-extern HMODULE g_hServerDll;
-extern DWORD   g_server_rva;
+BOOL              is_safe_server_path(const char *path);
+BOOL              path_is_within_dir(const char *path, const char *dir);
+IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void);
+BOOL              init_server_module(void);
+void              reset_server_globals(void);
+extern HMODULE    g_hServerDll;
+extern DWORD      g_server_rva;
+extern size_t     g_server_size;
 #endif
 
 // Hook implementations

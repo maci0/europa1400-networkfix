@@ -15,6 +15,7 @@
 #include "pattern_matcher.h"
 #include "versions.h"
 #include <psapi.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +36,8 @@ long find_pattern_in_memory(const unsigned char *haystack, size_t haystack_size,
                             size_t needle_size);
 BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset,
                                 size_t module_size);
+/* hooks.c PE import walk, exposed under NETWORKFIX_TEST */
+IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void);
 /* sha256.c public API */
 BOOL calculate_file_sha256(const wchar_t *filepath, char *hash_output, size_t output_size);
 
@@ -900,6 +903,130 @@ static void test_ini_empty_serverpath_falls_back_to_server_key(void)
                     "legacy\\server.dll");
 }
 
+/* ---- find_kernel32_sleep_thunk tests (synthetic mapped images) ---- */
+
+/* Fixed 4-aligned layout of the synthetic image so casting to PE structs
+ * stays aligned (the walker casts mapped bytes to struct pointers). */
+#define FP_DOS_OFF 0u
+#define FP_NT_OFF 64u    /* IMAGE_NT_HEADERS32: 248 bytes, ends at 312 */
+#define FP_DESC_OFF 312u /* one IMAGE_IMPORT_DESCRIPTOR, ends at 332 */
+#define FP_DLLNAME_OFF 336u
+#define FP_NAMETHUNK_OFF 352u
+#define FP_IAT_OFF 368u
+#define FP_IBN_OFF 384u /* WORD Hint at 384, variable-length Name at 386 */
+#define FP_IMAGE_SIZE 512u
+
+static unsigned char g_fake_pe[FP_IMAGE_SIZE];
+
+/* Builds a minimal mapped image the walker accepts: DOS+NT headers, one
+ * import descriptor, a single hint/name thunk pair for `import_name`, and an
+ * IAT slot holding a marker value. Zero fill provides every NUL terminator
+ * and both sentinel thunks; unterminated variants re-poison the tail. */
+static void build_fake_pe(const char *dll_name, const char *import_name)
+{
+    memset(g_fake_pe, 0, sizeof(g_fake_pe));
+
+    ((IMAGE_DOS_HEADER *)(g_fake_pe + FP_DOS_OFF))->e_magic = IMAGE_DOS_SIGNATURE;
+    ((IMAGE_DOS_HEADER *)(g_fake_pe + FP_DOS_OFF))->e_lfanew = FP_NT_OFF;
+
+    ((IMAGE_NT_HEADERS *)(g_fake_pe + FP_NT_OFF))->Signature = IMAGE_NT_SIGNATURE;
+
+    IMAGE_DATA_DIRECTORY *dir = &((IMAGE_NT_HEADERS *)(g_fake_pe + FP_NT_OFF))
+                                     ->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    dir->VirtualAddress = FP_DESC_OFF;
+    dir->Size = sizeof(IMAGE_IMPORT_DESCRIPTOR);
+
+    IMAGE_IMPORT_DESCRIPTOR *desc = (IMAGE_IMPORT_DESCRIPTOR *)(g_fake_pe + FP_DESC_OFF);
+    desc->OriginalFirstThunk = FP_NAMETHUNK_OFF;
+    desc->FirstThunk = FP_IAT_OFF;
+    desc->Name = FP_DLLNAME_OFF;
+
+    memcpy(g_fake_pe + FP_DLLNAME_OFF, dll_name, strlen(dll_name));
+    memcpy(g_fake_pe + FP_IBN_OFF + offsetof(IMAGE_IMPORT_BY_NAME, Name), import_name,
+           strlen(import_name));
+    ((IMAGE_THUNK_DATA *)(g_fake_pe + FP_NAMETHUNK_OFF))[0].u1.AddressOfData = FP_IBN_OFF;
+    ((IMAGE_THUNK_DATA *)(g_fake_pe + FP_IAT_OFF))[0].u1.Function = 0x00451337;
+}
+
+static void setup_walker(void)
+{
+    g_hServerDll = (HMODULE)(uintptr_t)g_fake_pe;
+    g_server_size = sizeof(g_fake_pe);
+}
+
+static void teardown_walker(void)
+{
+    g_hServerDll = NULL;
+    g_server_size = 0;
+}
+
+/* Well-formed KERNEL32!Sleep import resolves to the IAT slot. */
+static void test_sleep_thunk_found_in_well_formed_image(void)
+{
+    build_fake_pe("KERNEL32.dll", "Sleep");
+    setup_walker();
+    const IMAGE_THUNK_DATA *thunk = find_kernel32_sleep_thunk();
+    CHECK(thunk == (IMAGE_THUNK_DATA *)(g_fake_pe + FP_IAT_OFF),
+          "expected IAT slot at offset %u, got %p", FP_IAT_OFF, (void *)thunk);
+    teardown_walker();
+}
+
+/* DLL name matching is case-insensitive, as with _stricmp before. */
+static void test_sleep_thunk_matches_dll_name_case_insensitively(void)
+{
+    build_fake_pe("kernel32.dll", "Sleep");
+    setup_walker();
+    CHECK(find_kernel32_sleep_thunk() == (IMAGE_THUNK_DATA *)(g_fake_pe + FP_IAT_OFF),
+          "expected match for lowercase dll name");
+    teardown_walker();
+}
+
+/* A different DLL must not match. */
+static void test_sleep_thunk_rejects_other_dll(void)
+{
+    build_fake_pe("OTHER32.dll", "Sleep");
+    setup_walker();
+    CHECK(find_kernel32_sleep_thunk() == NULL, "expected NULL for non-KERNEL32 dll");
+    teardown_walker();
+}
+
+/* Corrupt-PE shape: the import name runs to the end of the image with no NUL.
+ * The walk must reject it without ever reading past the declared module size
+ * (strcmp would chase the missing terminator out of bounds). */
+static void test_sleep_thunk_rejects_unterminated_import_name(void)
+{
+    build_fake_pe("KERNEL32.dll", "Sleep");
+    memset(g_fake_pe + FP_IBN_OFF + offsetof(IMAGE_IMPORT_BY_NAME, Name) + strlen("Sleep"), 'X',
+           sizeof(g_fake_pe) - FP_IBN_OFF - offsetof(IMAGE_IMPORT_BY_NAME, Name) - strlen("Sleep"));
+    setup_walker();
+    CHECK(find_kernel32_sleep_thunk() == NULL,
+          "expected NULL when import name lacks its NUL terminator");
+    teardown_walker();
+}
+
+/* Corrupt-PE shape: the KERNEL32.dll name itself is unterminated. */
+static void test_sleep_thunk_rejects_unterminated_dll_name(void)
+{
+    build_fake_pe("KERNEL32.dll", "Sleep");
+    memset(g_fake_pe + FP_DLLNAME_OFF + strlen("KERNEL32.dll"), 'X',
+           sizeof(g_fake_pe) - FP_DLLNAME_OFF - strlen("KERNEL32.dll"));
+    setup_walker();
+    CHECK(find_kernel32_sleep_thunk() == NULL,
+          "expected NULL when the dll name lacks its NUL terminator");
+    teardown_walker();
+}
+
+/* Truncated view: the thunk's AddressOfData points at the first byte past the
+ * declared module size; every dereference must stay inside that size. */
+static void test_sleep_thunk_rejects_rva_past_module_end(void)
+{
+    build_fake_pe("KERNEL32.dll", "Sleep");
+    setup_walker();
+    g_server_size = FP_IBN_OFF; /* AddressOfData targets offset 384 = size -> out of view */
+    CHECK(find_kernel32_sleep_thunk() == NULL, "expected NULL when RVA leaves the declared view");
+    teardown_walker();
+}
+
 /* ---- Real server.dll fixture tests ---- */
 
 /* Looks up a hash in known_versions[]. Returns matching entry or NULL. */
@@ -1176,6 +1303,13 @@ int main(void)
     RUN(test_ini_empty_serverpath_falls_back_to_server_key);
     RUN(test_is_safe_server_path_rejects_absolute_and_traversal);
     RUN(test_path_is_within_dir_requires_separator);
+
+    RUN(test_sleep_thunk_found_in_well_formed_image);
+    RUN(test_sleep_thunk_matches_dll_name_case_insensitively);
+    RUN(test_sleep_thunk_rejects_other_dll);
+    RUN(test_sleep_thunk_rejects_unterminated_import_name);
+    RUN(test_sleep_thunk_rejects_unterminated_dll_name);
+    RUN(test_sleep_thunk_rejects_rva_past_module_end);
 
     WSACleanup();
 
