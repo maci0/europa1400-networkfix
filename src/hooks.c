@@ -686,18 +686,23 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
         int error = WSAGetLastError();
         if (error == WSAEWOULDBLOCK)
         {
-            // Show buffer state when WSAEWOULDBLOCK occurs (rate limited)
-            int available = get_available_bytes(s);
-            if (available >= 0)
+            // Show buffer state when WSAEWOULDBLOCK occurs (rate limited).
+            // The probe is an ioctlsocket syscall and would-block is this
+            // poll loop's steady state, so gather it only when the rate
+            // limiter will actually emit a line (gate reserves the interval);
+            // both outcomes report under the same key and cadence.
+            if (log_msg_rate_gate("recv_wouldblock"))
             {
-                log_msg_rate_limited(
-                    "recv_wouldblock",
-                    "[WS2 HOOK] recv: WSAEWOULDBLOCK, %d bytes available in buffer", available);
-            }
-            else
-            {
-                log_msg_rate_limited("recv_wouldblock_unknown",
-                                     "[WS2 HOOK] recv: WSAEWOULDBLOCK, buffer state unknown");
+                int available = get_available_bytes(s);
+                if (available >= 0)
+                {
+                    log_msg("[WS2 HOOK] recv: WSAEWOULDBLOCK, %d bytes available in buffer",
+                            available);
+                }
+                else
+                {
+                    log_msg("[WS2 HOOK] recv: WSAEWOULDBLOCK, buffer state unknown");
+                }
             }
 
             // Convert WSAEWOULDBLOCK to 0 for server.dll calls
