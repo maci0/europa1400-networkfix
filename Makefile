@@ -9,7 +9,9 @@ VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo 0.0.0-dev)
 DIST_DIR := dist
 DIST_NAME := networkfix-$(VERSION)
 MINHOOK_DIR := vendor/minhook
-# hde64.c is 32-bit only target - excluded to save ~400LOC compile
+# Target is 32-bit only; hde64.c excluded to save ~400 LOC of compile
+MINHOOK_TAG := $(shell git -C $(MINHOOK_DIR) describe --tags --exact-match 2>/dev/null)
+MINHOOK_VERSION := $(if $(MINHOOK_TAG),$(patsubst v%,%,$(MINHOOK_TAG)),unknown)
 MINHOOK_SRCS := $(MINHOOK_DIR)/src/buffer.c \
 $(MINHOOK_DIR)/src/hde/hde32.c \
 $(MINHOOK_DIR)/src/hook.c \
@@ -79,7 +81,7 @@ install: $(TARGET)
 
 sbom:
 	@mkdir -p $(DIST_DIR)
-	@echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"metadata":{"component":{"name":"europa1400-networkfix","version":"$(VERSION)","type":"application"}},"components":[{"name":"minhook","version":"1.3.4","type":"library","purl":"pkg:github/TsudaKageyu/minhook@v1.3.4"},{"name":"zig","version":"$(ZIG_VERSION_EXPECTED)","type":"application"}]}' > $(DIST_DIR)/sbom.json
+	@echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"metadata":{"component":{"name":"europa1400-networkfix","version":"$(VERSION)","type":"application"}},"components":[{"name":"minhook","version":"$(MINHOOK_VERSION)","type":"library","purl":"pkg:github/TsudaKageyu/minhook@v$(MINHOOK_VERSION)"},{"name":"zig","version":"$(ZIG_VERSION_EXPECTED)","type":"application"}]}' > $(DIST_DIR)/sbom.json
 	@echo "sbom: $(DIST_DIR)/sbom.json"
 
 dist: check-zig $(TARGET) sbom
