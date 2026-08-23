@@ -86,7 +86,7 @@ If you want to understand the problem and solution:
 → [Problem Analysis](problem-analysis.md)
 
 **...build from source**
-→ [Build Instructions](development-guide.md#build-instructions)
+→ [Build Commands](development-guide.md#build-commands)
 
 **...debug hook issues**
 → [Debugging Guide](development-guide.md#debugging)

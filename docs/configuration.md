@@ -330,7 +330,7 @@ The plugin tries multiple methods to find the server function:
 Edit [src/hooks.c](../src/hooks.c) in `detect_server_version()`:
 
 ```c
-static DWORD detect_server_version()
+static DWORD detect_server_version(char *file_hash_out /* [65] */)
 {
     // Force specific RVA (skip detection)
     log_msg("[HOOK] Using forced RVA 0x3720");
@@ -463,7 +463,7 @@ If pattern matching fails on GOG version:
 
 **Edit [src/hooks.c](../src/hooks.c) in `detect_server_version()`:**
 ```c
-static DWORD detect_server_version()
+static DWORD detect_server_version(char *file_hash_out /* [65] */)
 {
     log_msg("[HOOK] Forcing GOG version RVA 0x3960");
     return 0x3960;  // GOG offset
