@@ -559,13 +559,19 @@ static void maybe_set_nodelay(SOCKET s)
     if (!g_fix_active)
         return;
 
-    static int enabled = -1; // -1 unknown, 0 off, 1 on
-    if (enabled == -1)
+    /* Env is immutable for the process lifetime, so concurrent first callers
+     * (UI thread + server.dll pump thread) always resolve the same value;
+     * the interlocked publish just keeps a single writer per flag instead of
+     * an unsynchronized check-then-act data race. */
+    static LONG enabled = -1; // -1 unknown, 0 off, 1 on
+    LONG        resolved = InterlockedCompareExchange(&enabled, -1, -1);
+    if (resolved == -1)
     {
         // Default on; only "0" disables.
-        enabled = env_opt_out("NETWORKFIX_NODELAY") ? 0 : 1;
+        resolved = env_opt_out("NETWORKFIX_NODELAY") ? 0 : 1;
+        InterlockedCompareExchange(&enabled, resolved, -1);
     }
-    if (enabled == 0)
+    if (resolved == 0)
         return;
 
     /* Check the live value instead of remembering handles (see note above the
@@ -590,19 +596,23 @@ static void maybe_set_nodelay(SOCKET s)
  * send), without needing host kernel netem. Applied once per socket. */
 static void maybe_shrink_buffers(SOCKET s)
 {
-    static int tiny = -1; // -1 unknown, 0 off, >0 target bytes
-    if (tiny == -1)
+    /* Interlocked lazy init: same concurrent-first-call reasoning as
+     * maybe_set_nodelay above. */
+    static LONG tiny = -1; // -1 unknown, 0 off, >0 target bytes
+    LONG        resolved = InterlockedCompareExchange(&tiny, -1, -1);
+    if (resolved == -1)
     {
-        tiny = env_int("HARNESS_TINY_BUFFERS");
-        if (tiny < 0)
-            tiny = 0;
+        resolved = env_int("HARNESS_TINY_BUFFERS");
+        if (resolved < 0)
+            resolved = 0;
+        InterlockedCompareExchange(&tiny, resolved, -1);
     }
-    if (tiny == 0)
+    if (resolved == 0)
         return;
 
     /* Idempotent re-apply per call, no handle-keyed memory (see the note
      * above maybe_set_nodelay); log rate limited to match. */
-    int val = tiny;
+    int val = (int)resolved;
     if (setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char *)&val, sizeof(val)) != 0 ||
         setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&val, sizeof(val)) != 0)
     {
@@ -619,12 +629,16 @@ static void maybe_shrink_buffers(SOCKET s)
  * of server.dll traffic so protocol stalls can be diagnosed from hook_log. */
 static void maybe_trace_payload(const char *dir, const char *buf, int len)
 {
-    static int trace_state = -1; // -1 unknown, 0 off, 1 on
-    if (trace_state == -1)
+    /* Interlocked lazy init: same concurrent-first-call reasoning as
+     * maybe_set_nodelay above. */
+    static LONG trace_state = -1; // -1 unknown, 0 off, 1 on
+    LONG        resolved = InterlockedCompareExchange(&trace_state, -1, -1);
+    if (resolved == -1)
     {
-        trace_state = env_flag("HARNESS_NET_TRACE") ? 1 : 0;
+        resolved = env_flag("HARNESS_NET_TRACE") ? 1 : 0;
+        InterlockedCompareExchange(&trace_state, resolved, -1);
     }
-    if (trace_state != 1 || !buf || len <= 0)
+    if (resolved != 1 || !buf || len <= 0)
         return;
     char hex[3 * 48 + 1];
     int  n = len < 48 ? len : 48;
