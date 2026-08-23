@@ -37,6 +37,13 @@
 // SEND_MAX_RETRIES / SEND_RETRY_DELAY_MS live in hooks.h (shared with tests).
 #define DEFAULT_SERVER_PATH "Server\\server.dll"
 
+#ifdef NETWORKFIX_TEST
+// Test build: internal helpers are externally visible for direct testing.
+#define PATH_STATIC
+#else
+#define PATH_STATIC static
+#endif
+
 /* Environment toggles (user and harness). Values are single characters
  * ("0"/"1") or small integers by contract; read once per process by callers. */
 
@@ -96,9 +103,15 @@ static BOOL g_HooksInitialized = false;
 // When false (NETWORKFIX_DISABLE=1) the ws2/stream hooks are still installed
 // (so harness fault-injection, tracing and fastsync keep working) but they
 // pass through with the game's original semantics: this is the A/B baseline.
-static BOOL      g_fix_active = true;
-static DWORD     g_server_rva = 0;
-static HMODULE   g_hServerDll = NULL;
+static BOOL g_fix_active = true;
+#ifdef NETWORKFIX_TEST
+/* Test build: state visible so tests can assert the fallback contract. */
+DWORD   g_server_rva = 0;
+HMODULE g_hServerDll = NULL;
+#else
+static DWORD   g_server_rva = 0;
+static HMODULE g_hServerDll = NULL;
+#endif
 static uintptr_t g_server_base = 0;
 static size_t    g_server_size = 0;
 
@@ -175,7 +188,7 @@ static DWORD detect_server_version()
  * Resets all global server-related variables to their initial state.
  * Used for cleanup on initialization failure.
  */
-static void reset_server_globals(void)
+PATH_STATIC void reset_server_globals(void)
 {
     if (g_hServerDll)
     {
@@ -206,11 +219,6 @@ static int get_available_bytes(SOCKET s)
  * @param serverPath Path to server.dll to load
  * @return TRUE if loaded successfully, FALSE on error
  */
-#ifdef NETWORKFIX_TEST
-#define PATH_STATIC
-#else
-#define PATH_STATIC static
-#endif
 
 PATH_STATIC BOOL is_safe_server_path(const char *path)
 {
@@ -307,6 +315,26 @@ static BOOL load_server_dll(const char *serverPath)
 }
 
 /**
+ * Best-effort TOCTOU pre-hash of `path` resolved against the module dir.
+ * Fills `out` (65 bytes) and returns TRUE when the file could be hashed.
+ * Failure is tolerated: the load proceeds with post-load detection only.
+ */
+static BOOL preload_hash_server_file(const char *path, char out[65])
+{
+    // Build absolute file path for pre-hash (best-effort)
+    char    module_dir[MAX_PATH] = {0};
+    char    file_path[MAX_PATH] = {0};
+    wchar_t wpath[MAX_PATH];
+    if (!get_module_dir(g_hModule, module_dir) || !PathCombineA(file_path, module_dir, path) ||
+        MultiByteToWideChar(CP_ACP, 0, file_path, -1, wpath, MAX_PATH) == 0 || !calculate_file_sha256(wpath, out, 65))
+    {
+        return FALSE;
+    }
+    logf("[HOOK] Pre-load SHA256: %s", out);
+    return TRUE;
+}
+
+/**
  * Initializes the server.dll module completely: loads library, detects version,
  * and sets up module range information.
  *
@@ -314,7 +342,7 @@ static BOOL load_server_dll(const char *serverPath)
  *
  * @return TRUE if initialization successful, FALSE on any error
  */
-static BOOL init_server_module(void)
+PATH_STATIC BOOL init_server_module(void)
 {
     if (g_hServerDll != NULL && g_server_rva != 0 && g_server_base != 0)
     {
@@ -323,43 +351,45 @@ static BOOL init_server_module(void)
 
     // Get server path from game.ini or use default
     const char *serverPath = get_server_path_from_ini(g_hModule);
-    if (!serverPath)
-    {
-        serverPath = DEFAULT_SERVER_PATH;
-    }
+    if (serverPath && !serverPath[0])
+        serverPath = NULL; // empty entry counts as absent
 
     // TOCTOU mitigation: hash the file before LoadLibrary when we have a filesystem path,
     // then verify after load that the mapped image matches (pattern match is primary).
     // If file can't be hashed pre-load, fall back to post-load detection only.
+    // Optional allowlist: if hash known, we know it's whitelisted; if not,
+    // we still allow load but pattern matcher must succeed post-load.
     char preHash[65] = {0};
-    BOOL hasPreHash = FALSE;
+
+    BOOL loaded = FALSE;
+    if (serverPath)
     {
-        // Build absolute file path for pre-hash (best-effort)
-        char module_dir[MAX_PATH] = {0};
-        char file_path[MAX_PATH] = {0};
-        if (get_module_dir(g_hModule, module_dir) && PathCombineA(file_path, module_dir, serverPath))
-        {
-            wchar_t wpath[MAX_PATH];
-            if (MultiByteToWideChar(CP_ACP, 0, file_path, -1, wpath, MAX_PATH) != 0 &&
-                calculate_file_sha256(wpath, preHash, sizeof(preHash)))
-            {
-                hasPreHash = TRUE;
-                logf("[HOOK] Pre-load SHA256: %s", preHash);
-                // Optional allowlist: if hash known, we know it's whitelisted; if not,
-                // we still allow load but pattern matcher must succeed post-load.
-            }
-        }
+        preload_hash_server_file(serverPath, preHash);
+        loaded = load_server_dll(serverPath);
+    }
+
+    // Documented contract (docs/configuration.md "Default behavior"): a missing,
+    // invalid, or unloadable configured ServerPath falls back to
+    // DEFAULT_SERVER_PATH instead of aborting initialization.
+    if (!loaded && (!serverPath || strcmp(serverPath, DEFAULT_SERVER_PATH) != 0))
+    {
+        logf("[HOOK] Falling back to %s", DEFAULT_SERVER_PATH);
+        memset(preHash, 0, sizeof(preHash));
+        serverPath = DEFAULT_SERVER_PATH;
+        preload_hash_server_file(serverPath, preHash);
+        loaded = load_server_dll(serverPath);
     }
 
     // Load, validate, and detect version (pattern matcher does post-load validation)
-    if (!load_server_dll(serverPath) || (g_server_rva = detect_server_version()) == 0)
+    if (!loaded || (g_server_rva = detect_server_version()) == 0)
     {
         reset_server_globals();
         return FALSE;
     }
 
     // Verify pre-hash matches post-load hash if we had one (detect TOCTOU replacement)
-    if (hasPreHash)
+    // (a computed SHA256 hex string is never empty, so preHash[0] marks presence)
+    if (preHash[0])
     {
         wchar_t loadedPath[MAX_PATH];
         DWORD   loadedLen = GetModuleFileNameW(g_hServerDll, loadedPath, MAX_PATH);
@@ -752,8 +782,23 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 }
 
 /**
+ * Removes surrounding quotes from a GetPrivateProfileStringA result in place.
+ * @return The effective string length after stripping
+ */
+static DWORD strip_surrounding_quotes(char *value, DWORD len)
+{
+    if (len >= 2 && value[0] == '"' && value[len - 1] == '"')
+    {
+        memmove(value, value + 1, len - 2);
+        value[len - 2] = '\0';
+        len -= 2;
+    }
+    return len;
+}
+
+/**
  * Reads server path configuration from game.ini file.
- * Looks for "Server" key in "[Network]" section.
+ * Looks for "ServerPath" (documented) or "Server" (legacy) key in "[Network]".
  *
  * Uses GetPrivateProfileStringA() Windows API to parse INI file format.
  * Handles quoted paths and provides logging for troubleshooting.
@@ -781,24 +826,22 @@ const char *get_server_path_from_ini(HMODULE hModule)
 
     // Use GetPrivateProfileStringA() to read from INI file
     // Support both ServerPath (documented) and Server (legacy) keys for backwards compat.
+    // An empty value (e.g. ServerPath="") counts as absent so callers fall back
+    // to the documented default location.
     DWORD len = GetPrivateProfileStringA("Network", "ServerPath",
                                          "", // Default value
                                          serverPath, sizeof(serverPath), ini_path);
+    len = strip_surrounding_quotes(serverPath, len);
     if (len == 0)
     {
         len = GetPrivateProfileStringA("Network", "Server",
                                        "", // Fallback legacy key
                                        serverPath, sizeof(serverPath), ini_path);
+        len = strip_surrounding_quotes(serverPath, len);
     }
 
     if (len > 0)
     {
-        // Remove surrounding quotes if present (handles paths with spaces)
-        if (len >= 2 && serverPath[0] == '"' && serverPath[len - 1] == '"')
-        {
-            memmove(serverPath, serverPath + 1, len - 2);
-            serverPath[len - 2] = '\0';
-        }
         logf("[CONFIG] Read server path from game.ini: %s", serverPath);
         return serverPath;
     }
