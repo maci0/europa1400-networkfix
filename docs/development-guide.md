@@ -49,6 +49,7 @@ sudo pacman -S make clang git
 
 # Install Zig 0.16.0 (must match Makefile:ZIG_VERSION_EXPECTED)
 curl -O https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+# ARM64 Linux: use zig-aarch64-linux-0.16.0.tar.xz instead
 tar -xf zig-x86_64-linux-0.16.0.tar.xz
 sudo mv zig-x86_64-linux-0.16.0 /opt/zig
 export PATH=$PATH:/opt/zig
@@ -70,8 +71,20 @@ zig version  # must print 0.16.0 or `make check-zig` will fail
 # Install dependencies
 brew install make clang-format git
 
-# Install Zig
+# Install Zig 0.16.0 (must match Makefile:ZIG_VERSION_EXPECTED)
 brew install zig
+zig version  # must print 0.16.0 or `make check-zig` will fail
+```
+
+If Homebrew's `zig` formula is newer than 0.16.0, install the pinned version
+from the official release instead:
+
+```bash
+curl -O https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz
+# Intel Macs: zig-x86_64-macos-0.16.0.tar.xz
+tar -xf zig-aarch64-macos-0.16.0.tar.xz
+export PATH=$PATH:"$(pwd)/zig-aarch64-macos-0.16.0"
+zig version  # must print 0.16.0
 ```
 
 ## Building from Source
