@@ -12,9 +12,12 @@ DIST_NAME := networkfix-$(VERSION)
 # compiled without them (upstream code, off-limits to our lint policy).
 # The extra -W flags pass cleanly across release and test targets; do not
 # add -Wcast-align/-Wcast-qual: PE parsing intentionally casts unaligned
-# mapped bytes to struct pointers.
+# mapped bytes to struct pointers. -Wformat=2 -Wvla -Wconversion
+# -Wsign-conversion -Wswitch-enum -Wcovered-switch-default do not pass yet;
+# enable each once the tree is clean under it.
 WARNFLAGS := -Wall -Wextra -Werror -Wshadow -Wstrict-prototypes -Wmissing-prototypes \
-             -Wpointer-arith -Wredundant-decls -Wundef -Wwrite-strings
+             -Wpointer-arith -Wredundant-decls -Wundef -Wwrite-strings \
+             -Wnull-dereference -Wfloat-equal -Wdouble-promotion
 MINHOOK_DIR := vendor/minhook
 # Target is 32-bit only; hde64.c excluded to save ~400 LOC of compile
 MINHOOK_TAG := $(shell git -C $(MINHOOK_DIR) describe --tags --exact-match 2>/dev/null)
@@ -109,7 +112,7 @@ analyze: analyze-cppcheck analyze-shellcheck
 
 analyze-cppcheck:
 	cppcheck --error-exitcode=2 --inline-suppr --check-level=exhaustive \
-	--enable=warning,style,portability,performance \
+	--enable=warning,style,portability,performance,unusedFunction \
 	--std=c11 --platform=win32A -D_M_IX86=600 -D__GNUC__=4 \
 	-I$(MINHOOK_DIR)/include -Isrc $(CORE_SRCS) test/test_hooks.c
 

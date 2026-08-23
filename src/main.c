@@ -58,6 +58,8 @@ static DWORD WINAPI init_thread(LPVOID lpParam)
  * @param lpReserved Reserved parameter
  * @return TRUE on success, FALSE on failure
  */
+// cppcheck-suppress unusedFunction
+// False positive: DllMain is the PE entry point; only the loader calls it.
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
 {
     switch (dwReason)

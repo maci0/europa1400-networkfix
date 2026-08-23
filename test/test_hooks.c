@@ -55,7 +55,10 @@ void test_pump_messages(void);
 
 /* ---- Sleep counter (replaces Sleep() inside hook_send retry loop) ---- */
 static int g_sleep_calls = 0;
-void       test_sleep(DWORD ms)
+// cppcheck-suppress unusedFunction
+// Called from hooks.c via HOOK_SLEEP under NETWORKFIX_TEST; analyze runs the
+// release configuration, so cppcheck never sees that call site.
+void test_sleep(DWORD ms)
 {
     (void)ms; // Retry delay is simulated; only the call count matters
     g_sleep_calls++;
@@ -63,7 +66,9 @@ void       test_sleep(DWORD ms)
 
 /* ---- Message-pump counter (replaces PeekMessage pump inside retry loop) ---- */
 static int g_pump_calls = 0;
-void       test_pump_messages(void)
+// cppcheck-suppress unusedFunction
+// Called from hooks.c via HOOK_PUMP_MESSAGES under NETWORKFIX_TEST; see above.
+void test_pump_messages(void)
 {
     g_pump_calls++;
 }
