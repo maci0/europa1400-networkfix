@@ -10,7 +10,11 @@ DIST_DIR := dist
 DIST_NAME := networkfix-$(VERSION)
 # Warnings are errors for all first-party sources; vendored MinHook is
 # compiled without them (upstream code, off-limits to our lint policy).
-WARNFLAGS := -Wall -Wextra -Werror
+# The extra -W flags pass cleanly across release and test targets; do not
+# add -Wcast-align/-Wcast-qual: PE parsing intentionally casts unaligned
+# mapped bytes to struct pointers.
+WARNFLAGS := -Wall -Wextra -Werror -Wshadow -Wstrict-prototypes -Wmissing-prototypes \
+             -Wpointer-arith -Wredundant-decls -Wundef -Wwrite-strings
 MINHOOK_DIR := vendor/minhook
 # Target is 32-bit only; hde64.c excluded to save ~400 LOC of compile
 MINHOOK_TAG := $(shell git -C $(MINHOOK_DIR) describe --tags --exact-match 2>/dev/null)
@@ -90,18 +94,21 @@ verify: check-zig
 clean:
 	rm -f bin/*.asi bin/*.exe bin/*.pdb bin/*.lib 2>/dev/null; rm -f bin/verify*/*.asi 2>/dev/null || true
 
+# Rewrite formatting in place. lint checks; format fixes.
 format:
 	clang-format -i src/*.c src/*.h test/*.c
 
-lint: format
-	git diff --exit-code src/ test/
+# Verify formatting without mutating anything. Checks the working tree
+# directly (not git state), so it behaves identically locally and in CI.
+lint:
+	clang-format --dry-run --Werror src/*.c src/*.h test/*.c
 
 # Static analysis over first-party code; both targets must pass with zero
 # findings (inline cppcheck suppressions carry an in-code justification).
 analyze: analyze-cppcheck analyze-shellcheck
 
 analyze-cppcheck:
-	cppcheck --error-exitcode=2 --inline-suppr \
+	cppcheck --error-exitcode=2 --inline-suppr --check-level=exhaustive \
 	--enable=warning,style,portability,performance \
 	--std=c11 --platform=win32A -D_M_IX86=600 -D__GNUC__=4 \
 	-I$(MINHOOK_DIR)/include -Isrc $(CORE_SRCS) test/test_hooks.c
