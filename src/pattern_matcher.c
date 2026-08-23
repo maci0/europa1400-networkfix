@@ -56,6 +56,29 @@ static const unsigned char SRV_GAMESTREAMREADER_MASK[] = {
 #define SRV_GAMESTREAMREADER_PATTERN_SIZE (sizeof(SRV_GAMESTREAMREADER_PATTERN))
 
 /**
+ * Validates that the rel32 target of a two-byte-opcode branch (0F 84/85)
+ * starting at `opcode_off` bytes into the function stays inside the module.
+ * The operand follows the opcode; the next instruction begins 6 bytes after
+ * it. Signed offsets can point backwards, but a target below the module base
+ * or past its end means the match is not a real function entry.
+ *
+ * @return TRUE if the target is within [0, module_size), FALSE otherwise
+ */
+static BOOL branch_target_in_bounds(const unsigned char *func_start, size_t opcode_off, DWORD rva_offset,
+                                    size_t module_size)
+{
+    int32_t rel;
+    memcpy(&rel, func_start + opcode_off + 2, sizeof(rel));
+    int64_t target = (int64_t)rva_offset + (int64_t)opcode_off + 6 + (int64_t)rel;
+    if (target < 0 || (uint64_t)target >= module_size)
+    {
+        logf("[PATTERN] Branch target 0x%X is beyond module bounds (0x%zX)", (DWORD)target, module_size);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/**
  * Searches for a byte pattern within a memory region using mask-based matching.
  *
  * @param haystack Pointer to the memory region to search
@@ -119,37 +142,18 @@ PATTERN_STATIC BOOL validate_function_prologue(const unsigned char *base_addr, D
         return FALSE;
     }
 
-    // 2. Validate the conditional jump targets are reasonable
-    // Check JZ instruction at offset 17 (0x0F 0x84), operand at 19-22, instruction ends at 23
-    if (func_start[17] == 0x0F && func_start[18] == 0x84)
+    // 2. Validate the conditional jump targets stay inside the module.
+    // JZ (0F 84) sits at offset 17, JNZ (0F 85) at offset 27 of the pattern.
+    if (func_start[17] == 0x0F && func_start[18] == 0x84 &&
+        !branch_target_in_bounds(func_start, 17, rva_offset, module_size))
     {
-        // Extract 32-bit relative offset (little endian) using memcpy for safe unaligned access
-        int32_t jz_offset;
-        memcpy(&jz_offset, func_start + 19, sizeof(int32_t));
-        int64_t jz_target = (int64_t)rva_offset + 23 + (int64_t)jz_offset;
-
-        // Target should be within reasonable bounds of the module (signed offset can be negative)
-        if (jz_target < 0 || (uint64_t)jz_target >= module_size)
-        {
-            logf("[PATTERN] JZ target 0x%X is beyond module bounds (0x%zX)", (DWORD)jz_target, module_size);
-            return FALSE;
-        }
+        return FALSE;
     }
 
-    // 3. Check JNZ instruction at offset 27 (0x0F 0x85), operand at 29-32, instruction ends at 33
-    if (func_start[27] == 0x0F && func_start[28] == 0x85)
+    if (func_start[27] == 0x0F && func_start[28] == 0x85 &&
+        !branch_target_in_bounds(func_start, 27, rva_offset, module_size))
     {
-        // Extract 32-bit relative offset (little endian) using memcpy for safe unaligned access
-        int32_t jnz_offset;
-        memcpy(&jnz_offset, func_start + 29, sizeof(int32_t));
-        int64_t jnz_target = (int64_t)rva_offset + 33 + (int64_t)jnz_offset;
-
-        // Target should be within reasonable bounds of the module (signed offset can be negative)
-        if (jnz_target < 0 || (uint64_t)jnz_target >= module_size)
-        {
-            logf("[PATTERN] JNZ target 0x%X is beyond module bounds (0x%zX)", (DWORD)jnz_target, module_size);
-            return FALSE;
-        }
+        return FALSE;
     }
 
     logf("[PATTERN] Function prologue validation passed at RVA 0x%X", rva_offset);

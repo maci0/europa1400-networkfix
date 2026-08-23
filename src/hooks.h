@@ -13,6 +13,11 @@
 #define SEND_MAX_RETRIES 5000
 #define SEND_RETRY_DELAY_MS 1 // Delay between send retries (matches original)
 
+// Index of the error-code field inside srv_gameStreamReader's stream context
+// struct (offset 0x38). Negative values there desync the network stream; the
+// hook clamps them to 0.
+#define SRV_CTX_ERROR_INDEX 0xE
+
 // Hook initialization and cleanup functions
 BOOL init_hooks(void);
 void cleanup_hooks(void);

@@ -12,12 +12,12 @@
 #include "pattern_matcher.h"
 #include "sha256.h"
 #include "versions.h"
-#include <limits.h>
 #include <psapi.h>
 #include <shlwapi.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <windows.h>
 #include <winsock2.h>
@@ -36,6 +36,49 @@
 // Constants
 // SEND_MAX_RETRIES / SEND_RETRY_DELAY_MS live in hooks.h (shared with tests).
 #define DEFAULT_SERVER_PATH "Server\\server.dll"
+
+/* Environment toggles (user and harness). Values are single characters
+ * ("0"/"1") or small integers by contract; read once per process by callers. */
+
+/* Numeric value of an environment variable, 0 when unset or empty. */
+static int env_int(const char *name)
+{
+    char value[16] = {0};
+    if (GetEnvironmentVariableA(name, value, sizeof(value)) == 0)
+        return 0;
+    return atoi(value);
+}
+
+/* Reads a "1"-valued environment flag (harness contract). */
+static BOOL env_flag(const char *name)
+{
+    return env_int(name) == 1;
+}
+
+/* TRUE only when a variable is explicitly set to "0" (opt-out switches). */
+static BOOL env_opt_out(const char *name)
+{
+    char value[2] = {0};
+    return GetEnvironmentVariableA(name, value, sizeof(value)) == 1 && value[0] == '0';
+}
+
+/* Cap on the per-process one-shot socket tables below; once full, sockets are
+ * left unrecorded so their option keeps being re-applied (idempotent). */
+#define SEEN_SOCKETS_MAX 64
+
+/* FALSE if `s` is already recorded in `seen`, else records it and returns
+ * TRUE. Shared by maybe_set_nodelay/maybe_shrink_buffers apply-once logic. */
+static BOOL socket_first_seen(SOCKET s, SOCKET *seen, int *seen_count)
+{
+    for (int i = 0; i < *seen_count; i++)
+    {
+        if (seen[i] == s)
+            return FALSE;
+    }
+    if (*seen_count < SEEN_SOCKETS_MAX)
+        seen[(*seen_count)++] = s;
+    return TRUE;
+}
 
 #ifdef NETWORKFIX_TEST
 // Test build: real_recv/real_send are externally writable mocks.
@@ -200,6 +243,18 @@ PATH_STATIC BOOL path_is_within_dir(const char *path, const char *dir)
     return path[dlen] == '\\' || path[dlen] == '/';
 }
 
+/**
+ * Copies the directory portion of hModule's own path into out (MAX_PATH).
+ * @return TRUE on success, FALSE if the module path is unavailable or truncated
+ */
+static BOOL get_module_dir(HMODULE hModule, char *out /* [MAX_PATH] */)
+{
+    DWORD n = GetModuleFileNameA(hModule, out, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH)
+        return FALSE;
+    return PathRemoveFileSpecA(out) != FALSE;
+}
+
 static BOOL load_server_dll(const char *serverPath)
 {
     logf("[HOOK] Loading server.dll from: %s", serverPath);
@@ -208,20 +263,20 @@ static BOOL load_server_dll(const char *serverPath)
         logf("[HOOK] Rejected unsafe server path: %s", serverPath);
         return FALSE;
     }
-    // Verify canonical path stays within game dir
-    char  moduleDir[MAX_PATH] = {0};
-    DWORD n = GetModuleFileNameA(g_hModule, moduleDir, sizeof(moduleDir));
-    if (n != 0 && n < sizeof(moduleDir))
+
+    // Verify canonical path stays within game dir before loading
+    char module_dir[MAX_PATH] = {0};
+    if (get_module_dir(g_hModule, module_dir))
     {
-        PathRemoveFileSpecA(moduleDir);
-        char combined[MAX_PATH] = {0}, full[MAX_PATH] = {0}, canonical[MAX_PATH] = {0};
-        if (PathCombineA(combined, moduleDir, serverPath) && GetFullPathNameA(combined, sizeof(full), full, NULL) &&
-            GetFullPathNameA(full, sizeof(canonical), canonical, NULL))
+        char combined[MAX_PATH] = {0};
+        char canonical[MAX_PATH] = {0};
+        char game_dir[MAX_PATH] = {0};
+        if (PathCombineA(combined, module_dir, serverPath) &&
+            GetFullPathNameA(combined, sizeof(canonical), canonical, NULL) != 0 &&
+            GetFullPathNameA(module_dir, sizeof(game_dir), game_dir, NULL) != 0)
         {
-            // Must be under game dir (prefix match alone accepts C:\GuildExtra)
-            char gameDirCanonical[MAX_PATH] = {0};
-            GetFullPathNameA(moduleDir, sizeof(gameDirCanonical), gameDirCanonical, NULL);
-            if (!path_is_within_dir(canonical, gameDirCanonical))
+            // Prefix match alone accepts C:\GuildExtra; require containment
+            if (!path_is_within_dir(canonical, game_dir))
             {
                 logf("[HOOK] Rejected path outside game dir: %s -> %s", serverPath, canonical);
                 return FALSE;
@@ -237,6 +292,8 @@ static BOOL load_server_dll(const char *serverPath)
             return TRUE;
         }
     }
+
+    // Module dir unavailable: best effort with the configured relative path
     g_hServerDll = LoadLibraryA(serverPath);
     if (!g_hServerDll)
     {
@@ -278,22 +335,18 @@ static BOOL init_server_module(void)
     BOOL hasPreHash = FALSE;
     {
         // Build absolute file path for pre-hash (best-effort)
-        char  moduleDir[MAX_PATH] = {0};
-        char  filePath[MAX_PATH] = {0};
-        DWORD pathLen = GetModuleFileNameA(g_hModule, moduleDir, sizeof(moduleDir));
-        if (pathLen != 0 && pathLen < sizeof(moduleDir) && PathRemoveFileSpecA(moduleDir) &&
-            PathCombineA(filePath, moduleDir, serverPath))
+        char module_dir[MAX_PATH] = {0};
+        char file_path[MAX_PATH] = {0};
+        if (get_module_dir(g_hModule, module_dir) && PathCombineA(file_path, module_dir, serverPath))
         {
             wchar_t wpath[MAX_PATH];
-            if (MultiByteToWideChar(CP_ACP, 0, filePath, -1, wpath, MAX_PATH) != 0)
+            if (MultiByteToWideChar(CP_ACP, 0, file_path, -1, wpath, MAX_PATH) != 0 &&
+                calculate_file_sha256(wpath, preHash, sizeof(preHash)))
             {
-                if (calculate_file_sha256(wpath, preHash, sizeof(preHash)))
-                {
-                    hasPreHash = TRUE;
-                    logf("[HOOK] Pre-load SHA256: %s", preHash);
-                    // Optional allowlist: if hash known, we know it's whitelisted; if not,
-                    // we still allow load but pattern matcher must succeed post-load.
-                }
+                hasPreHash = TRUE;
+                logf("[HOOK] Pre-load SHA256: %s", preHash);
+                // Optional allowlist: if hash known, we know it's whitelisted; if not,
+                // we still allow load but pattern matcher must succeed post-load.
             }
         }
     }
@@ -429,10 +482,11 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
 
     // Apply fixes to prevent network instability
     BOOL modified = false;
-    if (ctx[0xE] < 0)
+    if (ctx[SRV_CTX_ERROR_INDEX] < 0)
     {
-        logf("[SERVER HOOK] srv_gameStreamReader: Fixed negative ctx[0xE] (%d -> 0)", ctx[0xE]);
-        ctx[0xE] = 0;
+        logf("[SERVER HOOK] srv_gameStreamReader: Fixed negative ctx[%d] (%d -> 0)", SRV_CTX_ERROR_INDEX,
+             ctx[SRV_CTX_ERROR_INDEX]);
+        ctx[SRV_CTX_ERROR_INDEX] = 0;
         modified = true;
     }
 
@@ -466,22 +520,19 @@ static void maybe_set_nodelay(SOCKET s)
     if (!g_fix_active)
         return;
 
-    static int    enabled = -1; // -1 unknown, 0 off, 1 on
-    static SOCKET seen[64];
-    static int    seen_n = 0;
+    static int enabled = -1; // -1 unknown, 0 off, 1 on
     if (enabled == -1)
     {
-        char v[2] = {0};
         // Default on; only "0" disables.
-        enabled = (GetEnvironmentVariableA("NETWORKFIX_NODELAY", v, sizeof(v)) == 1 && v[0] == '0') ? 0 : 1;
+        enabled = env_opt_out("NETWORKFIX_NODELAY") ? 0 : 1;
     }
     if (enabled == 0)
         return;
-    for (int i = 0; i < seen_n; i++)
-        if (seen[i] == s)
-            return;
-    if (seen_n < (int)(sizeof(seen) / sizeof(seen[0])))
-        seen[seen_n++] = s;
+
+    static SOCKET seen[SEEN_SOCKETS_MAX];
+    static int    seen_n = 0;
+    if (!socket_first_seen(s, seen, &seen_n))
+        return;
     int one = 1;
     if (setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof(one)) == 0)
         logf("[NODELAY] socket=%u TCP_NODELAY enabled (Nagle off)", (unsigned)s);
@@ -496,23 +547,20 @@ static void maybe_set_nodelay(SOCKET s)
  * send), without needing host kernel netem. Applied once per socket. */
 static void maybe_shrink_buffers(SOCKET s)
 {
-    static int    tiny = -1; // -1 unknown, 0 off, >0 target bytes
-    static SOCKET seen[64];
-    static int    seen_n = 0;
+    static int tiny = -1; // -1 unknown, 0 off, >0 target bytes
     if (tiny == -1)
     {
-        char v[8] = {0};
-        tiny = (GetEnvironmentVariableA("HARNESS_TINY_BUFFERS", v, sizeof(v)) > 0) ? atoi(v) : 0;
+        tiny = env_int("HARNESS_TINY_BUFFERS");
         if (tiny < 0)
             tiny = 0;
     }
     if (tiny == 0)
         return;
-    for (int i = 0; i < seen_n; i++)
-        if (seen[i] == s)
-            return;
-    if (seen_n < (int)(sizeof(seen) / sizeof(seen[0])))
-        seen[seen_n++] = s;
+
+    static SOCKET seen[SEEN_SOCKETS_MAX];
+    static int    seen_n = 0;
+    if (!socket_first_seen(s, seen, &seen_n))
+        return;
     int val = tiny;
     setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char *)&val, sizeof(val));
     setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&val, sizeof(val));
@@ -521,13 +569,12 @@ static void maybe_shrink_buffers(SOCKET s)
 
 /* Harness-only payload tracing (HARNESS_NET_TRACE=1): hex-dump the first bytes
  * of server.dll traffic so protocol stalls can be diagnosed from hook_log. */
-static void trace_payload(const char *dir, const char *buf, int len)
+static void maybe_trace_payload(const char *dir, const char *buf, int len)
 {
     static int trace_state = -1; // -1 unknown, 0 off, 1 on
     if (trace_state == -1)
     {
-        char v[2] = {0};
-        trace_state = (GetEnvironmentVariableA("HARNESS_NET_TRACE", v, sizeof(v)) == 1 && v[0] == '1') ? 1 : 0;
+        trace_state = env_flag("HARNESS_NET_TRACE") ? 1 : 0;
     }
     if (trace_state != 1 || !buf || len <= 0)
         return;
@@ -571,7 +618,7 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
     int result = real_recv(s, buf, len, flags);
     if (result > 0)
     {
-        trace_payload("recv", buf, result);
+        maybe_trace_payload("recv", buf, result);
     }
 
     // Baseline (fix off): return exactly what Windows returned, no WSAEWOULDBLOCK
@@ -638,7 +685,7 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
                       (unsigned)s, len, flags);
     maybe_set_nodelay(s);
     maybe_shrink_buffers(s);
-    trace_payload("send", buf, len);
+    maybe_trace_payload("send", buf, len);
 
     // Baseline (fix off): reproduce the original game's single, no-retry send.
     if (!g_fix_active)
@@ -717,7 +764,6 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
 const char *get_server_path_from_ini(HMODULE hModule)
 {
     static char serverPath[MAX_PATH];
-    char        iniPath[MAX_PATH];
 
     if (hModule == NULL)
     {
@@ -725,45 +771,24 @@ const char *get_server_path_from_ini(HMODULE hModule)
         return NULL;
     }
 
-    // Get the path of the DLL using GetModuleFileNameA()
-    DWORD iniLen = GetModuleFileNameA(hModule, iniPath, sizeof(iniPath));
-    if (iniLen == 0 || iniLen >= sizeof(iniPath))
+    char module_dir[MAX_PATH] = {0};
+    char ini_path[MAX_PATH] = {0};
+    if (!get_module_dir(hModule, module_dir) || !PathCombineA(ini_path, module_dir, "game.ini"))
     {
-        logf("[CONFIG] Failed to get module file name: %lu", GetLastError());
+        logf("[CONFIG] Could not locate game.ini next to module");
         return NULL;
-    }
-
-    // Remove filename and append game.ini using Path API
-    if (!PathRemoveFileSpecA(iniPath))
-    {
-        logf("[CONFIG] Could not remove file spec from module path: %s", iniPath);
-        return NULL;
-    }
-
-    // PathCombineA does not support overlapping buffers (pszDest == pszDir).
-    // Use a temporary buffer to avoid undefined behavior (verified against
-    // MSDN: pszDest should not overlap pszDir/pszFile).
-    {
-        char combined[MAX_PATH];
-        if (!PathCombineA(combined, iniPath, "game.ini"))
-        {
-            logf("[CONFIG] Could not combine path with game.ini");
-            return NULL;
-        }
-        // Safe copy back to iniPath (combined was built from iniPath, no overflow)
-        strcpy(iniPath, combined);
     }
 
     // Use GetPrivateProfileStringA() to read from INI file
     // Support both ServerPath (documented) and Server (legacy) keys for backwards compat.
     DWORD len = GetPrivateProfileStringA("Network", "ServerPath",
                                          "", // Default value
-                                         serverPath, sizeof(serverPath), iniPath);
+                                         serverPath, sizeof(serverPath), ini_path);
     if (len == 0)
     {
         len = GetPrivateProfileStringA("Network", "Server",
                                        "", // Fallback legacy key
-                                       serverPath, sizeof(serverPath), iniPath);
+                                       serverPath, sizeof(serverPath), ini_path);
     }
 
     if (len > 0)
@@ -778,7 +803,7 @@ const char *get_server_path_from_ini(HMODULE hModule)
         return serverPath;
     }
 
-    logf("[CONFIG] Could not find 'ServerPath'/'Server' in '[Network]' section of %s", iniPath);
+    logf("[CONFIG] Could not find 'ServerPath'/'Server' in '[Network]' section of %s", ini_path);
     return NULL;
 }
 
@@ -840,13 +865,6 @@ static void __cdecl hook_evt_poll(void)
     real_evt_poll();
 }
 
-/* Reads a "1"-valued environment flag (harness contract). */
-static BOOL env_flag(const char *name)
-{
-    char value[2] = {0};
-    return GetEnvironmentVariableA(name, value, sizeof(value)) == 1 && value[0] == '1';
-}
-
 /*
  * Fast sync: server.dll's network pump thread is throttled by a hardcoded
  * Sleep(30) and dequeues exactly ONE queued message per connection per tick
@@ -874,13 +892,10 @@ static VOID WINAPI       hook_server_sleep(DWORD ms)
 
 static void patch_server_sleep_iat(void)
 {
+    if (env_opt_out("NETWORKFIX_FASTSYNC"))
     {
-        char v[2] = {0};
-        if (GetEnvironmentVariableA("NETWORKFIX_FASTSYNC", v, sizeof(v)) == 1 && v[0] == '0')
-        {
-            logf("[FASTSYNC] Disabled via NETWORKFIX_FASTSYNC=0");
-            return;
-        }
+        logf("[FASTSYNC] Disabled via NETWORKFIX_FASTSYNC=0");
+        return;
     }
 
     if (!g_hServerDll || g_server_size == 0)
