@@ -311,8 +311,12 @@ void log_msg_rate_limited(const char *key, const char *fmt, ...)
     va_list ap;
     va_start(ap, fmt);
     char buffer[512];
-    vsnprintf(buffer, sizeof(buffer), fmt, ap);
+    int  len = vsnprintf(buffer, sizeof(buffer), fmt, ap);
     va_end(ap);
+
+    // Formatting failure leaves buffer indeterminate; never pass it on.
+    if (len < 0)
+        return;
 
     log_msg("%s", buffer);
 }

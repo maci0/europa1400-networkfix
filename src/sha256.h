@@ -1,8 +1,9 @@
 #ifndef SHA256_H
 #define SHA256_H
 
-#include <windows.h>
+// winsock2.h must precede windows.h (mingw warns otherwise)
 #include <winsock2.h>
+#include <windows.h>
 
 /**
  * Calculate SHA256 hash of a file using Windows CryptoAPI.

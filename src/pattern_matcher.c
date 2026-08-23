@@ -72,8 +72,10 @@ static BOOL branch_target_in_bounds(const unsigned char *func_start, size_t opco
     int64_t target = (int64_t)rva_offset + (int64_t)opcode_off + 6 + (int64_t)rel;
     if (target < 0 || (uint64_t)target >= module_size)
     {
-        log_msg("[PATTERN] Branch target 0x%X is beyond module bounds (0x%zX)", (DWORD)target,
-                module_size);
+        // Signed so backwards (negative rel32) targets are not printed as
+        // huge hex addresses.
+        log_msg("[PATTERN] Branch target %lld is beyond module bounds [0, 0x%zX)",
+                (long long)target, module_size);
         return FALSE;
     }
     return TRUE;

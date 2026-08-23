@@ -1,8 +1,9 @@
 #ifndef PATTERN_MATCHER_H
 #define PATTERN_MATCHER_H
 
-#include <windows.h>
+// winsock2.h must precede windows.h (mingw warns otherwise)
 #include <winsock2.h>
+#include <windows.h>
 
 /**
  * Result codes for pattern matching operations.

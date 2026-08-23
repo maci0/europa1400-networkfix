@@ -318,6 +318,10 @@ static BOOL preload_hash_server_file(const char *path, char out[65])
         MultiByteToWideChar(CP_ACP, 0, file_path, -1, wpath, MAX_PATH) == 0 ||
         !calculate_file_sha256(wpath, out, 65))
     {
+        // Tolerated (load proceeds with post-load detection only), but say why
+        // the pre-load TOCTOU check is absent from the log.
+        log_msg("[HOOK] Pre-load hash unavailable for %s, relying on post-load detection only",
+                path);
         return FALSE;
     }
     log_msg("[HOOK] Pre-load SHA256: %s", out);
@@ -586,8 +590,14 @@ static void maybe_shrink_buffers(SOCKET s)
     /* Idempotent re-apply per call, no handle-keyed memory (see the note
      * above maybe_set_nodelay); log rate limited to match. */
     int val = tiny;
-    setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char *)&val, sizeof(val));
-    setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&val, sizeof(val));
+    if (setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char *)&val, sizeof(val)) != 0 ||
+        setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&val, sizeof(val)) != 0)
+    {
+        // Fault injection silently missing would invalidate harness runs.
+        log_msg_rate_limited("tiny_buf_fail", "[TINY BUF] socket=%u setsockopt failed: %d",
+                             (unsigned)s, WSAGetLastError());
+        return;
+    }
     log_msg_rate_limited("tiny_buf", "[TINY BUF] socket=%u SO_SNDBUF/SO_RCVBUF set to %d bytes",
                          (unsigned)s, val);
 }
@@ -679,6 +689,9 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
         }
 
         log_winsock_error("[WS2 HOOK] recv", s, error);
+        // The logging calls above can overwrite the per-thread last error;
+        // re-publish the real winsock error so the caller sees what failed.
+        WSASetLastError(error);
     }
     else if (result == 0)
     {
@@ -880,7 +893,8 @@ static BOOL create_hook_api(const wchar_t *module, const char *function, void *h
     }
     else
     {
-        log_msg("[HOOK] Failed to create %s hook: %d", hook_name, (int)status);
+        log_msg("[HOOK] Failed to create %s hook: %s (%d)", hook_name, MH_StatusToString(status),
+                (int)status);
         return FALSE;
     }
 }
@@ -1003,8 +1017,12 @@ static void patch_server_sleep_iat(void)
             real_server_sleep = (VOID(WINAPI *)(DWORD))(uintptr_t)iatThunk->u1.Function;
             iatThunk->u1.Function = (uintptr_t)hook_server_sleep;
             g_server_sleep_iat = iatThunk;
-            VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function), oldProtect,
-                           &oldProtect);
+            if (!VirtualProtect(&iatThunk->u1.Function, sizeof(iatThunk->u1.Function), oldProtect,
+                                &oldProtect))
+            {
+                // Page stays writable for the process lifetime; surface it.
+                log_msg("[FASTSYNC] Failed to restore IAT page protection: %lu", GetLastError());
+            }
             log_msg("[FASTSYNC] Patched server.dll Sleep IAT slot %p (orig %p)",
                     (void *)&iatThunk->u1.Function, (void *)real_server_sleep);
             return;
@@ -1023,8 +1041,12 @@ static void restore_server_sleep_iat(void)
                        PAGE_READWRITE, &oldProtect))
     {
         g_server_sleep_iat->u1.Function = (uintptr_t)real_server_sleep;
-        VirtualProtect(&g_server_sleep_iat->u1.Function, sizeof(g_server_sleep_iat->u1.Function),
-                       oldProtect, &oldProtect);
+        if (!VirtualProtect(&g_server_sleep_iat->u1.Function,
+                            sizeof(g_server_sleep_iat->u1.Function), oldProtect, &oldProtect))
+        {
+            // Page stays writable for the process lifetime; surface it.
+            log_msg("[FASTSYNC] Failed to restore IAT page protection: %lu", GetLastError());
+        }
         log_msg("[FASTSYNC] Restored server.dll Sleep IAT");
     }
     g_server_sleep_iat = NULL;
@@ -1052,7 +1074,7 @@ static BOOL create_evt_guard_hook(void)
         log_msg("[EVT GUARD] Installed evt poll NULL guard at %p", EVT_POLL_ADDR);
         return TRUE;
     }
-    log_msg("[EVT GUARD] MH_CreateHook failed: %d", (int)status);
+    log_msg("[EVT GUARD] MH_CreateHook failed: %s (%d)", MH_StatusToString(status), (int)status);
     return FALSE;
 }
 
@@ -1084,7 +1106,8 @@ static BOOL create_hooks(void)
         }
         else
         {
-            log_msg("[HOOK] Failed to create hook for server function: %d", (int)status);
+            log_msg("[HOOK] Failed to create hook for server function: %s (%d)",
+                    MH_StatusToString(status), (int)status);
             success = FALSE;
         }
     }
@@ -1137,7 +1160,7 @@ BOOL init_hooks(void)
     MH_STATUS status = MH_Initialize();
     if (status != MH_OK)
     {
-        log_msg("[HOOK] MH_Initialize failed: %d", (int)status);
+        log_msg("[HOOK] MH_Initialize failed: %s (%d)", MH_StatusToString(status), (int)status);
         reset_server_globals();
         return FALSE;
     }
@@ -1182,7 +1205,7 @@ BOOL init_hooks(void)
     }
     else
     {
-        log_msg("[HOOK] Failed to enable hooks: %d", (int)status);
+        log_msg("[HOOK] Failed to enable hooks: %s (%d)", MH_StatusToString(status), (int)status);
         MH_DisableHook(MH_ALL_HOOKS);
         MH_Uninitialize();
         restore_server_sleep_iat();

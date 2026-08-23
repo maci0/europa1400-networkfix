@@ -4,8 +4,8 @@
 // winsock2.h must precede windows.h (mingw warns otherwise)
 #include <stdbool.h>
 #include <stdint.h>
-#include <windows.h>
 #include <winsock2.h>
+#include <windows.h>
 
 typedef struct
 {
