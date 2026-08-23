@@ -148,9 +148,8 @@ The compiled plugins will be in:
 
 #### Loading Screen Hangs for Minutes, Then Recovers
 - **Symptoms:** Starting/loading a multiplayer game (even localhost/LAN) freezes the loading screen for 1–3 minutes before suddenly finishing. No OOS error.
-- **Cause:** Verified 2026-08-09 with the `harness/` Xvfb + xdotool harness: `src/hooks.c:hook_send` retries `WSAEWOULDBLOCK` with `Sleep(1)` on the UI thread (up to `5000` retries ≙ ~5 s per `send` call, many calls during save/map sync). While in that loop, no `PeekMessage/DispatchMessage` is pumped, so the progress dialog appears hung; localhost fills the loopback window just as fast as VPN.
-- **Workaround:** Wait — the transfer eventually completes and the fix then works (no OOS). Use `harness/netem.sh --clear` and `GILDE` local setup to confirm harness logs.
-- **Future fix:** Pump messages in the retry loop (e.g. `PeekMessage` + `Translate/Dispatch`) or move `send` retry off the UI thread.
+- **Status:** Fixed. Verified 2026-08-09 with the `harness/` Xvfb + xdotool harness: `src/hooks.c:hook_send` retried `WSAEWOULDBLOCK` with `Sleep(1)` on the UI thread (up to `5000` retries ≙ ~5 s per `send` call, many calls during save/map sync). While in that loop, no `PeekMessage/DispatchMessage` was pumped, so the progress dialog appeared hung; localhost fills the loopback window just as fast as VPN.
+- **Fix:** The retry wait now pumps pending window messages (`pump_pending_messages` in `src/hooks.c`), keeping the progress dialog responsive while the send drains. The transfer itself is additionally accelerated by fast sync (`NETWORKFIX_FASTSYNC`, on by default).
 
 ### Log Analysis
 

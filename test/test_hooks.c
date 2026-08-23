@@ -47,6 +47,13 @@ void       test_sleep(DWORD ms)
     g_sleep_calls++;
 }
 
+/* ---- Message-pump counter (replaces PeekMessage pump inside retry loop) ---- */
+static int g_pump_calls = 0;
+void       test_pump_messages(void)
+{
+    g_pump_calls++;
+}
+
 /* ---- Scriptable recv mock ---- */
 typedef struct
 {
@@ -154,6 +161,7 @@ static void reset_state(void)
     g_send_script.zero_at = -1;
     g_send_script.stall_after = -1;
     g_sleep_calls = 0;
+    g_pump_calls = 0;
     real_recv = mock_recv;
     real_send = mock_send;
     WSASetLastError(0);
@@ -233,6 +241,7 @@ static void test_send_retries_then_succeeds(void)
 
     CHECK(r == 10, "expected all 10 bytes, got %d", r);
     CHECK(g_sleep_calls == 3, "expected 3 sleeps, got %d", g_sleep_calls);
+    CHECK(g_pump_calls == 3, "expected 3 message-pump calls during retries, got %d", g_pump_calls);
     CHECK(g_send_script.total_accepted == 10, "expected 10 bytes accepted, got %d",
           g_send_script.total_accepted);
 }
@@ -319,6 +328,9 @@ static void test_send_max_retries_zero_progress_returns_timeout(void)
     CHECK(WSAGetLastError() == WSAETIMEDOUT, "expected WSAETIMEDOUT, got %d", WSAGetLastError());
     CHECK(g_sleep_calls == SEND_MAX_RETRIES, "expected %d sleeps, got %d", SEND_MAX_RETRIES,
           g_sleep_calls);
+    CHECK(g_pump_calls == SEND_MAX_RETRIES,
+          "every retry wait must pump messages so the UI thread stays responsive; got %d",
+          g_pump_calls);
     CHECK(g_send_script.call_count == SEND_MAX_RETRIES, "expected %d send calls, got %d",
           SEND_MAX_RETRIES, g_send_script.call_count);
 }
@@ -351,6 +363,7 @@ static void test_send_non_server_passthrough(void)
     CHECK(WSAGetLastError() == WSAEWOULDBLOCK, "expected WSAEWOULDBLOCK preserved, got %d",
           WSAGetLastError());
     CHECK(g_sleep_calls == 0, "expected 0 sleeps on passthrough, got %d", g_sleep_calls);
+    CHECK(g_pump_calls == 0, "expected 0 message-pump calls on passthrough, got %d", g_pump_calls);
     g_test_force_caller_server = TRUE;
 }
 

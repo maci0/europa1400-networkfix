@@ -78,13 +78,33 @@ static BOOL env_opt_out(const char *name)
 
 #ifdef NETWORKFIX_TEST
 // Test build: real_recv/real_send are externally writable mocks.
-// Sleep is redirected to a counter so retry loops do not waste wallclock time.
+// Sleep and message pumping are redirected to counters so retry loops do not
+// waste wallclock time or require a win32 message queue.
 #define HOOK_STATIC
 void test_sleep(DWORD ms);
+void test_pump_messages(void);
 #define HOOK_SLEEP(ms) test_sleep(ms)
+#define HOOK_PUMP_MESSAGES() test_pump_messages()
 #else
 #define HOOK_STATIC static
 #define HOOK_SLEEP(ms) Sleep(ms)
+
+/* Drains this thread's pending window messages. The send-retry loop can run
+ * for seconds on the UI thread while a full send buffer drains; without
+ * pumping, WM_PAINT and sent messages queue up and the loading/progress
+ * dialog appears frozen for minutes (verified via harness/, see README
+ * troubleshooting). Dispatching here keeps the dialog responsive; reentrant
+ * sends from a dispatched handler recurse safely (loop state is per-call). */
+static void pump_pending_messages(void)
+{
+    MSG msg;
+    while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE))
+    {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+}
+#define HOOK_PUMP_MESSAGES() pump_pending_messages()
 #endif
 
 // Global state
@@ -117,9 +137,12 @@ HOOK_STATIC srv_gameStreamReader_t real_srv_gameStreamReader = NULL;
  * Detect server.dll version by calculating its SHA256 hash.
  * Gets the module path and returns the RVA offset using pattern matching.
  *
+ * @param file_hash_out Buffer (65 bytes) receiving the lowercase hex SHA256
+ *                      of the loaded server.dll; the caller reuses it as the
+ *                      post-load hash instead of re-reading the file.
  * @return RVA offset for the target function, or 0 if pattern matching fails
  */
-static DWORD detect_server_version()
+static DWORD detect_server_version(char *file_hash_out /* [65] */)
 {
     if (!g_hServerDll)
     {
@@ -137,8 +160,8 @@ static DWORD detect_server_version()
     }
 
     // Calculate file hash directly from wide path
-    char fileHash[65]; // 64 chars + null terminator
-    if (!calculate_file_sha256(serverPath, fileHash, sizeof(fileHash)))
+    char *fileHash = file_hash_out;
+    if (!fileHash || !calculate_file_sha256(serverPath, fileHash, 65))
     {
         log_msg("[HOOK] Failed to calculate SHA256 for server.dll");
         return 0;
@@ -375,7 +398,10 @@ PATH_STATIC BOOL init_server_module(void)
     }
 
     // Load, validate, and detect version (pattern matcher does post-load validation)
-    if (!loaded || (g_server_rva = detect_server_version()) == 0)
+    // The hash computed here is a post-LoadLibrary read of the mapped module's
+    // file; reuse it as the TOCTOU post-hash instead of hashing a third time.
+    char postHash[65] = {0};
+    if (!loaded || (g_server_rva = detect_server_version(postHash)) == 0)
     {
         reset_server_globals();
         return FALSE;
@@ -383,25 +409,12 @@ PATH_STATIC BOOL init_server_module(void)
 
     // Verify pre-hash matches post-load hash if we had one (detect TOCTOU replacement)
     // (a computed SHA256 hex string is never empty, so preHash[0] marks presence)
-    if (preHash[0])
+    if (preHash[0] && postHash[0] && strcmp(preHash, postHash) != 0)
     {
-        wchar_t loadedPath[MAX_PATH];
-        DWORD   loadedLen = GetModuleFileNameW(g_hServerDll, loadedPath, MAX_PATH);
-        if (loadedLen != 0 && loadedLen < MAX_PATH)
-        {
-            char postHash[65] = {0};
-            if (calculate_file_sha256(loadedPath, postHash, sizeof(postHash)))
-            {
-                if (strcmp(preHash, postHash) != 0)
-                {
-                    log_msg("[HOOK] Hash mismatch pre/post load: %s != %s — possible replacement, "
-                            "aborting",
-                            preHash, postHash);
-                    reset_server_globals();
-                    return FALSE;
-                }
-            }
-        }
+        log_msg("[HOOK] Hash mismatch pre/post load: %s != %s — possible replacement, aborting",
+                preHash, postHash);
+        reset_server_globals();
+        return FALSE;
     }
 
     // Get module information for range checking
@@ -760,6 +773,7 @@ int WSAAPI hook_send(SOCKET s, const char *buf, int len, int flags)
                     "[WS2 HOOK] send: WSAEWOULDBLOCK, send buffer likely full (retry %d/%d)",
                     retry_count + 1, SEND_MAX_RETRIES);
                 HOOK_SLEEP(SEND_RETRY_DELAY_MS);
+                HOOK_PUMP_MESSAGES();
                 retry_count++;
                 continue;
             }

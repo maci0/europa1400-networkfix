@@ -46,14 +46,16 @@ The game doesn't handle partial send operations properly:
 - No retry logic for `WSAEWOULDBLOCK` on send operations
 - Leads to incomplete packet transmission
 
-**Harness note:** even on localhost the multiplayer loading screen can freeze
-for seconds while `hook_send` retries `WSAEWOULDBLOCK` on the UI thread
+**Harness note:** even on localhost the multiplayer loading screen used to
+freeze for seconds while `hook_send` retried `WSAEWOULDBLOCK` on the UI thread
 (`Sleep(1)` up to `SEND_MAX_RETRIES` = 5000 ≈ 5 s per call, no
-`PeekMessage`/`DispatchMessage` pumped). Localhost fills the loopback window
-just like VPN. The town-data transfer itself is separately throttled by
-`server.dll`'s `Sleep(30)` pump; `NETWORKFIX_FASTSYNC` clamps that to 1 ms so
-the snapshot finishes in seconds rather than ~160 s. See `src/hooks.c`
-(`SEND_MAX_RETRIES`, `hook_send`, `patch_server_sleep_iat`).
+`PeekMessage`/`DispatchMessage` pumped). The retry wait now pumps the thread's
+pending window messages (`pump_pending_messages` in `src/hooks.c`), so the
+progress dialog stays responsive while a send drains. Localhost fills the
+loopback window just like VPN. The town-data transfer itself is separately
+throttled by `server.dll`'s `Sleep(30)` pump; `NETWORKFIX_FASTSYNC` clamps that
+to 1 ms so the snapshot finishes in seconds rather than ~160 s. See
+`src/hooks.c` (`SEND_MAX_RETRIES`, `hook_send`, `patch_server_sleep_iat`).
 
 ### 4. Timer Synchronization Assumptions
 
@@ -118,7 +120,8 @@ if (error == WSAEWOULDBLOCK) {
 while (total < len && retry_count < MAX_RETRIES) {
     sent = real_send(s, buf + total, len - total, flags);
     if (sent == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) {
-        Sleep(1);  // Brief pause
+        Sleep(1);              // Brief pause
+        pump_pending_messages(); // Keep the UI thread responsive
         retry_count++;
         continue;  // Try again
     }

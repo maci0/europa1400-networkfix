@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `hooks.c`: the `hook_send` retry wait now pumps pending window messages
+  (`PeekMessage`/`TranslateMessage`/`DispatchMessage`). Previously a full send
+  buffer stalled the UI thread for up to ~5 s per call with no message pump,
+  freezing the multiplayer loading screen for minutes during save/map sync
+  (verified via `harness/`). The progress dialog now stays responsive while
+  the buffer drains; retry semantics are unchanged and pinned by tests.
 - `hooks.c`: honor the documented `game.ini` `ServerPath` fallback: a missing,
   unsafe, or unloadable configured path now retries `Server\server.dll` instead
   of aborting initialization (docs/configuration.md "Default behavior" and
@@ -20,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disabled (as its own table row already said). Row now matches behavior.
 
 ### Changed
+
+- `hooks.c`: reuse the version-detection SHA256 of the loaded server.dll as
+  the TOCTOU post-load hash, dropping one redundant full-file hash per start.
+- `sha256.c`: hash files in 16 KiB chunks instead of 4 KiB, cutting read/hash
+  syscalls per file 4x on the startup path.
 
 - `hooks.c`: require a directory separator in the game-dir containment check
   so `C:\Guild` no longer matches `C:\GuildExtra\…`; restore the
