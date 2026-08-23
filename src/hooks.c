@@ -717,8 +717,16 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
     }
     else if (result == 0)
     {
-        log_msg("[WS2 HOOK] recv: Connection gracefully closed by peer on socket %u", (unsigned)s);
-        log_socket_buffer_info(s);
+        /* A closed connection that the game keeps polling would emit these
+         * lines on every call and roll the 50k-line log over within seconds,
+         * destroying earlier evidence; the would-block probe above is gated
+         * for the same reason. First occurrence per interval always logs. */
+        if (log_msg_rate_gate("recv_closed"))
+        {
+            log_msg("[WS2 HOOK] recv: Connection gracefully closed by peer on socket %u",
+                    (unsigned)s);
+            log_socket_buffer_info(s);
+        }
     }
 
     return result;
@@ -1119,6 +1127,14 @@ static void restore_server_sleep_iat(void)
             log_msg("[FASTSYNC] Failed to restore IAT page protection: %lu", GetLastError());
         }
         log_msg("[FASTSYNC] Restored server.dll Sleep IAT");
+    }
+    else
+    {
+        // Without write access the IAT keeps pointing at hook_server_sleep; if
+        // server.dll stays mapped via another reference while this DLL unloads,
+        // its pump thread would jump into freed code. Never skip silently.
+        log_msg("[FASTSYNC] VirtualProtect failed before IAT restore: %lu — hook left installed",
+                GetLastError());
     }
 }
 
