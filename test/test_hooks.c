@@ -12,6 +12,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include "hooks.h"
+#include "logging.h"
 #include "pattern_matcher.h"
 #include "versions.h"
 #include <psapi.h>
@@ -1241,6 +1242,46 @@ static void test_init_server_module_falls_back_to_default(void)
     }
 }
 
+/* ---- Rate-limited logging gate ---- */
+
+/* Points g_logctx at the NUL device so gated logging paths run fully
+ * initialized without creating artifacts next to the test binary. The
+ * critical section is deliberately never deleted by close_logging, so this
+ * must only initialize when not already initialized. */
+static void open_null_log_once(void)
+{
+    if (g_logctx.critical_section_initialized)
+        return;
+    InitializeCriticalSection(&g_logctx.critical_section);
+    g_logctx.log_file =
+        CreateFileW(L"\\\\.\\NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                    OPEN_EXISTING, 0, NULL);
+    if (g_logctx.log_file != INVALID_HANDLE_VALUE)
+        g_logctx.critical_section_initialized = true;
+}
+
+/* gate: NULL keys are refused outright, initialized or not. */
+static void test_rate_gate_rejects_null_key(void)
+{
+    CHECK(log_msg_rate_gate(NULL) == false, "NULL key must be refused");
+}
+
+/* gate: a key's first use passes (fresh slot, empty uptime-based window),
+ * the immediate repeat is suppressed, and a second key passes independently.
+ * This is the contract hook_recv relies on to skip its ioctlsocket probe. */
+static void test_rate_gate_admits_then_suppresses(void)
+{
+    open_null_log_once();
+    CHECK(g_logctx.critical_section_initialized == true, "NUL log device unavailable");
+
+    CHECK(log_msg_rate_gate("gate_test_k1") == true, "first use of a key must pass");
+    CHECK(log_msg_rate_gate("gate_test_k1") == false,
+          "immediate repeat within the interval must be suppressed");
+    CHECK(log_msg_rate_gate("gate_test_k2") == true, "a second key must pass independently");
+    CHECK(log_msg_rate_gate("gate_test_k1") == false,
+          "suppression must persist across interleaved keys");
+}
+
 int main(void)
 {
     WSADATA wsa;
@@ -1303,6 +1344,9 @@ int main(void)
     RUN(test_ini_empty_serverpath_falls_back_to_server_key);
     RUN(test_is_safe_server_path_rejects_absolute_and_traversal);
     RUN(test_path_is_within_dir_requires_separator);
+
+    RUN(test_rate_gate_rejects_null_key);
+    RUN(test_rate_gate_admits_then_suppresses);
 
     RUN(test_sleep_thunk_found_in_well_formed_image);
     RUN(test_sleep_thunk_matches_dll_name_case_insensitively);

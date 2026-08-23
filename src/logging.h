@@ -23,6 +23,7 @@ bool                   init_logging(HMODULE hModule);
 void                   close_logging(void);
 void                   log_msg(const char *fmt, ...);
 void                   log_msg_rate_limited(const char *key, const char *fmt, ...);
+bool                   log_msg_rate_gate(const char *key);
 void                   log_winsock_error(const char *prefix, SOCKET s, int error);
 void                   log_socket_buffer_info(SOCKET s);
 

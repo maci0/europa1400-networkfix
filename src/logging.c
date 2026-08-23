@@ -21,10 +21,6 @@ static const uint32_t MAX_LOG_LINES = 50000u;     /* Max lines before rollover *
 static const size_t   LOG_BUFFER_SIZE = 2048;     /* Log message buffer size */
 static const size_t   TIMESTAMP_BUFFER_SIZE = 64; /* Timestamp buffer size */
 
-/* Distinct rate-limit keys tracked at once; overflow evicts the oldest.
- * Headroom above the ten keys currently used by hooks.c. */
-#define LOG_RATE_LIMIT_SLOTS 16
-
 /* Last socket whose buffer sizes were logged; dedups repeated log lines. */
 static SOCKET s_last_logged_socket = INVALID_SOCKET;
 
@@ -260,32 +256,23 @@ void close_logging(void)
      * see the invalidated handle and return without writing. */
 }
 
-/**
- * Rate-limited logging function to prevent spam.
- * Only logs a message if it hasn't been logged recently.
- */
-void log_msg_rate_limited(const char *key, const char *fmt, ...)
+/* Rate-limit slot table shared by log_msg_rate_limited and log_msg_rate_gate.
+ * Distinct keys tracked at once; overflow evicts the oldest. Headroom above
+ * the ten keys currently used by hooks.c. */
+#define LOG_RATE_LIMIT_SLOTS 16
+
+static struct
 {
-    static struct
-    {
-        char      key[64];
-        ULONGLONG last_logged;
-    } rate_limit_cache[LOG_RATE_LIMIT_SLOTS] = {0};
+    char      key[64];
+    ULONGLONG last_logged;
+} rate_limit_cache[LOG_RATE_LIMIT_SLOTS] = {0};
 
-    if (!key || !fmt)
-        return;
-
-    // If logging not initialized, bail before touching CS (CS not valid yet)
-    if (!g_logctx.critical_section_initialized)
-        return;
-
-    // Elapsed-time measurement: GetTickCount64 never wraps (32-bit
-    // GetTickCount wraps after ~49.7 days uptime, corrupting both the
-    // interval check and the oldest-slot eviction below).
-    ULONGLONG current_time = GetTickCount64();
-
-    EnterCriticalSection(&g_logctx.critical_section);
-
+/* Resolves the cache slot for `key` (existing entry, first free slot, or
+ * oldest-entry eviction) and, when the per-key interval has elapsed, reserves
+ * the slot by recording key and timestamp. Caller holds the critical section.
+ * @return true when exactly one message under `key` may be written now */
+static bool rate_limit_acquire(const char *key, ULONGLONG current_time)
+{
     int cache_slot = -1;
 
     // Find existing entry or empty slot
@@ -319,17 +306,56 @@ void log_msg_rate_limited(const char *key, const char *fmt, ...)
 
     // Check if enough time has passed
     if (current_time - rate_limit_cache[cache_slot].last_logged < LOG_RATE_LIMIT_MS)
-    {
-        LeaveCriticalSection(&g_logctx.critical_section);
-        return; // Skip logging
-    }
+        return false; // Skip logging
 
-    // Update cache and log message
+    // Reserve the slot for the caller's one message
     strncpy(rate_limit_cache[cache_slot].key, key, sizeof(rate_limit_cache[cache_slot].key) - 1);
     rate_limit_cache[cache_slot].key[sizeof(rate_limit_cache[cache_slot].key) - 1] = '\0';
     rate_limit_cache[cache_slot].last_logged = current_time;
+    return true;
+}
 
+bool log_msg_rate_gate(const char *key)
+{
+    /* Same guards and accounting as log_msg_rate_limited, minus formatting:
+     * hot paths use it to skip gathering diagnostics (syscalls, buffer dumps)
+     * for lines the limiter would suppress anyway. A true return reserves the
+     * interval, so the follow-up message must be emitted unconditionally. */
+    if (!key || !g_logctx.critical_section_initialized)
+        return false;
+
+    // Elapsed-time measurement: GetTickCount64 never wraps (32-bit
+    // GetTickCount wraps after ~49.7 days uptime, corrupting both the
+    // interval check and the oldest-slot eviction in rate_limit_acquire).
+    ULONGLONG current_time = GetTickCount64();
+
+    EnterCriticalSection(&g_logctx.critical_section);
+    bool due = rate_limit_acquire(key, current_time);
     LeaveCriticalSection(&g_logctx.critical_section);
+    return due;
+}
+
+/**
+ * Rate-limited logging function to prevent spam.
+ * Only logs a message if it hasn't been logged recently.
+ */
+void log_msg_rate_limited(const char *key, const char *fmt, ...)
+{
+    if (!key || !fmt)
+        return;
+
+    // If logging not initialized, bail before touching CS (CS not valid yet)
+    if (!g_logctx.critical_section_initialized)
+        return;
+
+    ULONGLONG current_time = GetTickCount64();
+
+    EnterCriticalSection(&g_logctx.critical_section);
+    bool due = rate_limit_acquire(key, current_time);
+    LeaveCriticalSection(&g_logctx.critical_section);
+
+    if (!due)
+        return;
 
     va_list ap;
     va_start(ap, fmt);

@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `hooks.c`, `logging.c`: the recv WSAEWOULDBLOCK diagnostic no longer issues
+  an `ioctlsocket` probe per poll tick just to feed a rate-limited log line.
+  A new `log_msg_rate_gate` lets callers ask the limiter whether a message is
+  due before gathering it, so the probe runs at most once per 5 s (and never
+  when logging is down) instead of on every would-block event of the game's
+  recv poll loop.
 - `hooks.c`: reuse the version-detection SHA256 of the loaded server.dll as
   the TOCTOU post-load hash, dropping one redundant full-file hash per start.
 - `sha256.c`: hash files in 16 KiB chunks instead of 4 KiB, cutting read/hash
