@@ -25,6 +25,8 @@ PATTERN_STATIC long find_pattern_in_memory(const unsigned char *haystack, size_t
                                            size_t needle_size);
 PATTERN_STATIC BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset,
                                                size_t module_size);
+PATTERN_STATIC PATTERN_MATCH_RESULT find_first_valid_match(const unsigned char *base_addr,
+                                                           size_t module_size, DWORD *found_rva);
 
 // Pattern for srv_gameStreamReader function based on disassembly analysis
 // Common signature across Steam and GOG versions:
@@ -174,6 +176,51 @@ PATTERN_STATIC BOOL validate_function_prologue(const unsigned char *base_addr, D
 }
 
 /**
+ * Scans [base_addr, base_addr+module_size) for every occurrence of the
+ * srv_gameStreamReader pattern and returns the first one that passes prologue
+ * validation. A false-positive hit at a lower address must not mask a valid
+ * match later in the image: byte patterns are heuristic, so candidates are
+ * validated in address order until one is accepted.
+ *
+ * @param base_addr Base address of the module
+ * @param module_size Size of the module for bounds checking
+ * @param found_rva Output parameter receiving the RVA of the accepted match
+ * @return PATTERN_MATCH_SUCCESS if a candidate validated, PATTERN_MATCH_NOT_FOUND
+ *         when the pattern never occurs, or PATTERN_MATCH_VALIDATION_FAILED when
+ *         occurrences exist but none validates
+ */
+PATTERN_STATIC PATTERN_MATCH_RESULT find_first_valid_match(const unsigned char *base_addr,
+                                                           size_t module_size, DWORD *found_rva)
+{
+    size_t search_off = 0;
+    BOOL   any_match = FALSE;
+
+    while (search_off < module_size)
+    {
+        long rel = find_pattern_in_memory(base_addr + search_off, module_size - search_off,
+                                          SRV_GAMESTREAMREADER_PATTERN, SRV_GAMESTREAMREADER_MASK,
+                                          SRV_GAMESTREAMREADER_PATTERN_SIZE);
+        if (rel == -1)
+            break;
+
+        DWORD rva_offset = (DWORD)(search_off + (size_t)rel);
+        any_match = TRUE;
+
+        if (validate_function_prologue(base_addr, rva_offset, module_size))
+        {
+            *found_rva = rva_offset;
+            return PATTERN_MATCH_SUCCESS;
+        }
+
+        log_msg("[PATTERN] Candidate at RVA 0x%X rejected by validation, continuing scan",
+                rva_offset);
+        search_off += (size_t)rel + 1;
+    }
+
+    return any_match ? PATTERN_MATCH_VALIDATION_FAILED : PATTERN_MATCH_NOT_FOUND;
+}
+
+/**
  * Attempts to find the srv_gameStreamReader function using pattern matching.
  *
  * @param module_handle Handle to the loaded server.dll module
@@ -204,31 +251,25 @@ PATTERN_MATCH_RESULT find_srv_gameStreamReader_by_pattern(HMODULE module_handle,
     const unsigned char *module_base = (const unsigned char *)module_info.lpBaseOfDll;
     size_t               module_size = module_info.SizeOfImage;
 
-    // Search for the pattern
-    long pattern_offset =
-        find_pattern_in_memory(module_base, module_size, SRV_GAMESTREAMREADER_PATTERN,
-                               SRV_GAMESTREAMREADER_MASK, SRV_GAMESTREAMREADER_PATTERN_SIZE);
+    // Scan every occurrence; accept the first that validates (see helper).
+    PATTERN_MATCH_RESULT result = find_first_valid_match(module_base, module_size, found_rva);
 
-    if (pattern_offset == -1)
+    switch (result)
     {
+    case PATTERN_MATCH_SUCCESS:
+        log_msg("[PATTERN] Successfully found srv_gameStreamReader at RVA 0x%X", *found_rva);
+        break;
+    case PATTERN_MATCH_NOT_FOUND:
         log_msg("[PATTERN] srv_gameStreamReader pattern not found in module");
-        return PATTERN_MATCH_NOT_FOUND;
+        break;
+    case PATTERN_MATCH_VALIDATION_FAILED:
+        log_msg("[PATTERN] Pattern validation failed at all candidate RVAs");
+        break;
+    default:
+        break;
     }
 
-    DWORD rva_offset = (DWORD)pattern_offset;
-    log_msg("[PATTERN] Found potential srv_gameStreamReader pattern at RVA 0x%X", rva_offset);
-
-    // Validate the found pattern
-    if (!validate_function_prologue(module_base, rva_offset, module_size))
-    {
-        log_msg("[PATTERN] Pattern validation failed at RVA 0x%X", rva_offset);
-        return PATTERN_MATCH_VALIDATION_FAILED;
-    }
-
-    *found_rva = rva_offset;
-    log_msg("[PATTERN] Successfully found srv_gameStreamReader at RVA 0x%X", rva_offset);
-
-    return PATTERN_MATCH_SUCCESS;
+    return result;
 }
 
 /**

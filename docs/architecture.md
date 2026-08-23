@@ -206,6 +206,7 @@ Game Code → recv() → [MinHook Trampoline] → hook_recv()
 
 **Key Functions:**
 - `find_srv_gameStreamReader_by_pattern()` — scan `server.dll` for the common prologue
+- `find_first_valid_match()` — scan every pattern occurrence, accept the first that validates (a false-positive hit can no longer mask a valid match later in the image)
 - `find_pattern_in_memory()` / `validate_function_prologue()` — mask search + JE/JNE bounds check (test-only exports)
 
 ### 5. Version Detection ([src/versions.c](../src/versions.c), [src/sha256.c](../src/sha256.c))
@@ -355,7 +356,9 @@ Different game editions have the packet validation function at different offsets
 ```c
 // rizin-verified: 0x51 PUSH ECX … 0F 84/85 wildcards … 8B 45 38
 // src/pattern_matcher.c:SRV_GAMESTREAMREADER_PATTERN (36 B) + MASK
-long off = find_pattern_in_memory(base, size, PATTERN, MASK, sizeof(PATTERN));
+// find_first_valid_match(): scan every occurrence in address order and
+// accept the first whose JE/JNE targets stay inside the module
+PATTERN_MATCH_RESULT r = find_first_valid_match(base, size, &rva);
 ```
 
 **SHA256 Verification:**
