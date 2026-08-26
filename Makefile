@@ -5,6 +5,11 @@ ZIG_VERSION_EXPECTED := 0.16.0
 # this month". CI installs this exact version (.github/workflows/build.yml).
 CLANG_FORMAT ?= clang-format
 CLANG_FORMAT_VERSION_EXPECTED := 22.1.8
+# Pinned for the same reason: shellcheck renumbers and retunes checks between
+# releases (0.9 reports SC2317 where 0.11 reports SC2329), so an unpinned
+# binary makes `make analyze` mean different things on different machines.
+SHELLCHECK ?= shellcheck
+SHELLCHECK_VERSION_EXPECTED := 0.11.0
 WINE ?= wine
 TARGET := bin/networkfix.asi
 DEBUG_TARGET := bin/networkfix-debug.asi
@@ -47,7 +52,7 @@ TEST_SRCS := $(TEST_CORE_SRCS) $(MINHOOK_SRCS)
 CFLAGS := -I$(MINHOOK_DIR)/include -Isrc
 LDFLAGS := -lc -lws2_32 -lshlwapi -ladvapi32 -luser32
 
-.PHONY: all debug clean install test build-test check-zig check-clang-format format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
+.PHONY: all debug clean install test build-test check-zig check-clang-format check-shellcheck format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
 
 # README documents bare `make` as building the release target.
 .DEFAULT_GOAL := all
@@ -59,6 +64,10 @@ check-zig:
 check-clang-format:
 	@$(CLANG_FORMAT) --version | grep -q "$(CLANG_FORMAT_VERSION_EXPECTED)" || \
 		(echo "ERROR: clang-format $(CLANG_FORMAT_VERSION_EXPECTED) required, got $$( $(CLANG_FORMAT) --version)" && exit 1)
+
+check-shellcheck:
+	@$(SHELLCHECK) --version | grep -q "version: $(SHELLCHECK_VERSION_EXPECTED)" || \
+		(echo "ERROR: shellcheck $(SHELLCHECK_VERSION_EXPECTED) required, got $$( $(SHELLCHECK) --version | grep version:)" && exit 1)
 
 all: check-zig $(TARGET)
 
@@ -125,8 +134,8 @@ analyze-cppcheck:
 	--std=c11 --platform=win32A -D_M_IX86=600 -D__GNUC__=4 \
 	-I$(MINHOOK_DIR)/include -Isrc $(CORE_SRCS) test/test_hooks.c
 
-analyze-shellcheck:
-	shellcheck -x $(SHELL_SCRIPTS)
+analyze-shellcheck: check-shellcheck
+	$(SHELLCHECK) -x $(SHELL_SCRIPTS)
 
 install: $(TARGET)
 	cp $(TARGET) ~/.wine/drive_c/Guild

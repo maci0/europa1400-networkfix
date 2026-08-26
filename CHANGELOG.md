@@ -79,6 +79,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lint` previously ran whatever the runner image happened to ship, so a
   version bump under CI could fail `main` with no change on our side; it did,
   on this release. CI installs the pinned version via uvx.
+- shellcheck is pinned to 0.11.0 the same way, installed in CI from the
+  upstream release with a checksum. Check IDs move between releases, so the
+  apt build reported SC2317/SC2015 on scripts that pass here. cppcheck stays
+  on apt; it has no upstream binary release to pin to, and the Makefile and
+  development guide now say so instead of implying the gate is reproducible.
+- `harness/drivers/common.sh`: `hide_lua_console` used `A && B || C`, which
+  runs C when B fails too. Rewritten as an `if`.
+- `make analyze` was never documented; the development guide now covers it,
+  along with the corrected 100-column limit.
 - Docs: removed a README diagnostic step that told readers to uncomment debug
   lines that do not exist, corrected the test count, collapsed two duplicate
   documentation indexes, and replaced the "manual testing TODO" and its

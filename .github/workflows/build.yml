@@ -46,10 +46,23 @@ jobs:
           CLANG_FORMAT: uvx clang-format@22.1.8
         run: make lint
 
+      # shellcheck is pinned for the same reason as clang-format: the apt
+      # version renumbers and retunes checks between releases. cppcheck stays
+      # on apt (no upstream binary release to pin to), so a runner image bump
+      # can still surface new cppcheck findings here.
+      # Version must match Makefile:SHELLCHECK_VERSION_EXPECTED.
       - name: Static analysis (cppcheck + shellcheck)
+        env:
+          SHELLCHECK_VERSION: 0.11.0
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cppcheck shellcheck
+          sudo apt-get install -y --no-install-recommends cppcheck
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" -o /tmp/shellcheck.tar.xz
+          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.xz" | sha256sum --check --strict
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp
+          sudo install -m 0755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
           make analyze
 
       - name: Cache Zig

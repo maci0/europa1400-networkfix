@@ -232,6 +232,26 @@ See [.clang-format](../.clang-format) for rules:
 - **Pointer alignment:** Right-aligned (`char *ptr`)
 - **Trailing newline:** required (`InsertNewlineAtEOF`)
 
+### Static analysis
+
+```bash
+make analyze            # both of the below
+make analyze-cppcheck   # first-party C, warning/style/portability/performance
+make analyze-shellcheck # every script in Makefile:SHELL_SCRIPTS
+```
+
+Both must report zero findings. A suppression needs an inline comment saying
+why the finding does not apply (`// cppcheck-suppress <id>` on the line
+above, `# shellcheck disable=SCxxxx` for scripts); do not widen a check or
+drop a file from the list instead.
+
+shellcheck is pinned to **0.11.0** (`Makefile:SHELLCHECK_VERSION_EXPECTED`),
+which CI installs from the upstream release with a checksum. Check IDs move
+between releases (0.9 reports SC2317 where 0.11 reports SC2329), so an
+unpinned binary gives different results per machine. cppcheck is not pinned:
+it has no upstream binary release, so it comes from apt and a runner image
+bump can surface new findings.
+
 ### Naming Conventions
 
 **Functions:**

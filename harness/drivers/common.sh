@@ -45,7 +45,9 @@ wait_crop_change() {
 hide_lua_console() {
   local c
   c=$(xdotool search --onlyvisible --name "Lua Console" 2>/dev/null | head -n1 || true)
-  [ -n "$c" ] && xdotool windowunmap "$c" 2>/dev/null || true
+  if [ -n "$c" ]; then
+    xdotool windowunmap "$c" 2>/dev/null || true
+  fi
 }
 
 # Click coords are rendered position + 43 (wine client-area Y offset), 1152x864.
