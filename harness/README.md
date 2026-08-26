@@ -146,7 +146,7 @@ run until something fails, dismissing year-end UI automatically.
   that will not clear after ~6 tries (likely an error dialog). Each failure
   captures `endur_fail_*` screenshots and a `game.log` tail.
 - Cadence: at max clock speed the calendar advances ~1 game-year per real hour
-  (multiplayer forbids time-cheats — they desync — so clock speed is the
+  (multiplayer forbids time-cheats, which desync, so clock speed is the
   ceiling). Expect a multi-hour run; `entrypoint.sh` already writes a
   screenshot every 5s so the frame history is captured for post-mortem.
 
@@ -182,7 +182,7 @@ lobby handshake), then SIGCONTs after `AB_FREEZE_S` (default 25). Confirmed
 | `ab-off` | yes, on 128 B send | same 28 B + 128 B (pass-through, no WOULDBLOCK log) | both peers `gameplay completed, session healthy` |
 
 A 25 s wineserver freeze on a 128 B datagram does **not** fill the 4 KB
-send buffer or produce a silent partial send — TCP just holds the one
+send buffer or produce a silent partial send: TCP just holds the one
 segment until CONT. A fail-the-baseline contrast still needs a real
 bottleneck (`sch_netem`/`sch_tbf`, see `artifacts/NETEM_NOTE.md`) or a
 much longer freeze overlapping a large town-snapshot burst.
@@ -190,11 +190,11 @@ much longer freeze overlapping a large town-snapshot burst.
 Fault-injection knobs in networkfix.asi (all env-gated, applied independently
 of the fix so the A/B stays fair):
 
-- `NETWORKFIX_DISABLE=1` — faithful baseline: hooks stay installed but pass
+- `NETWORKFIX_DISABLE=1`: faithful baseline, hooks stay installed but pass
   through with the original game semantics (single no-retry send, no
   WSAEWOULDBLOCK conversion, no stream-reader clamp). Only the fix behaviour is
   toggled, so both arms see identical machinery/stress.
-- `HARNESS_TINY_BUFFERS=N` — shrink each server.dll socket's SO_SNDBUF/SO_RCVBUF
+- `HARNESS_TINY_BUFFERS=N`: shrink each server.dll socket's SO_SNDBUF/SO_RCVBUF
   to N bytes so the sender fills quickly under any congestion.
 
 Local bridge caveat: on a clean docker bridge, normal gameplay does NOT desync
@@ -211,10 +211,10 @@ graceful `Max retries exceeded, sent 0/145 bytes` (WSAETIMEDOUT) instead of a
 silent partial send. This is the exact path the baseline drops with no retry.
 
 Timing note: a *brief* freeze is unreliable to A/B because `fastsync` makes the
-transfer so fast that the send-buffer-full window is tiny — a randomly-timed
+transfer so fast that the send-buffer-full window is tiny, so a randomly-timed
 freeze usually misses it. For a clean pass/fail comparison, freeze on the first
 observed 145B send (`HARNESS_NET_TRACE=1`), or use netem for a steady
-degradation (`GC_LOSS`, needs `sch_netem` — see `NETEM_NOTE.md`). The SIGSTOP
+degradation (`GC_LOSS`, needs `sch_netem`, see `NETEM_NOTE.md`). The SIGSTOP
 method is what forces the send-buffer-full path that netem alone does not
 produce on a fast link.
 

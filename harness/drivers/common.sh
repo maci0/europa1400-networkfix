@@ -12,7 +12,7 @@ lua_probe() {
   return 1
 }
 shot() { import -window root "$SHOT_DIR/screenshot_$(date +%s)_$1.png" 2>/dev/null || true; }
-# lua_do "click(1,2)" — run lua source in-process via the harness init.lua command loop
+# lua_do "click(1,2)": run lua source in-process via the harness init.lua command loop
 lua_do() {
   rm -f /tmp/lua_out.txt
   printf '%s\nreturn 1' "$1" > /tmp/lua_cmd.lua
@@ -20,17 +20,17 @@ lua_do() {
   echo "[lua_do] timeout waiting for lua_out: $1" >&2
   return 1
 }
-# wait_lua_ready — true once the in-process command loop wrote its Ready flag
+# wait_lua_ready: true once the in-process command loop wrote its Ready flag
 wait_lua_ready() {
   for _ in $(seq 1 60); do [ -f /tmp/lua_Ready.ok ] && return 0; sleep 1; done
   return 1
 }
-# crop_md5 x y w h — md5 of a root-window region (cursor-safe change detection)
+# crop_md5 x y w h: md5 of a root-window region (cursor-safe change detection)
 crop_md5() {
   import -window root -crop "${3}x${4}+${1}+${2}" /tmp/crop_wait.png 2>/dev/null
   md5sum /tmp/crop_wait.png 2>/dev/null | cut -d' ' -f1
 }
-# wait_crop_change x y w h timeout_s — true once the region's content changes
+# wait_crop_change x y w h timeout_s: true once the region's content changes
 wait_crop_change() {
   local base
   base=$(crop_md5 "$1" "$2" "$3" "$4")
@@ -41,7 +41,7 @@ wait_crop_change() {
   done
   return 1
 }
-# hide_lua_console — the AllocConsole window covers the game; unmap it
+# hide_lua_console: the AllocConsole window covers the game; unmap it
 hide_lua_console() {
   local c
   c=$(xdotool search --onlyvisible --name "Lua Console" 2>/dev/null | head -n1 || true)
@@ -49,7 +49,7 @@ hide_lua_console() {
 }
 
 # Click coords are rendered position + 43 (wine client-area Y offset), 1152x864.
-# dismiss_year_scroll — click Continue until the year-start scroll clears to the
+# dismiss_year_scroll: click Continue until the year-start scroll clears to the
 # town view (top status bar appears). Returns 0 once in-game.
 dismiss_year_scroll() {
   for _ in $(seq 1 10); do
@@ -61,7 +61,7 @@ dismiss_year_scroll() {
   return 1
 }
 
-# desync_alive WID — true while the game session is healthy: process window
+# desync_alive WID: true while the game session is healthy: process window
 # still present AND title still the in-game title (a drop reverts to a menu/
 # dialog or the window vanishes). Also fails on known fatal log strings.
 desync_alive() {
@@ -75,7 +75,7 @@ desync_alive() {
   return 0
 }
 
-# topbar_mean — mean brightness (0..65535) of the in-game status bar strip.
+# topbar_mean: mean brightness (0..65535) of the in-game status bar strip.
 # High (~34k) when the parchment bar is visible; low (~21k) when a fullscreen
 # scroll/dialog (year-end, error) covers it. Used to detect blocking modals.
 topbar_mean() {
@@ -83,7 +83,7 @@ topbar_mean() {
     | convert miff:- -colorspace Gray -format '%[fx:mean*65535]' info: 2>/dev/null
 }
 
-# max_speed — click the clock a few times to raise game speed to max. The clock
+# max_speed: click the clock a few times to raise game speed to max. The clock
 # face is at rendered (1085,45) -> click (1085,88); repeated clicks step the
 # speed up (measured ~3x advance after 5 clicks). Year-start resets it, so the
 # endurance loop re-calls this after each dismissed year modal.
@@ -91,7 +91,7 @@ max_speed() {
   for _ in 1 2 3 4 5; do lua_do "click(1085,88)"; sleep 0.3; done
 }
 
-# endurance_run WID — max speed, then run indefinitely: pass years at max speed,
+# endurance_run WID: max speed, then run indefinitely: pass years at max speed,
 # dismiss the year-end modal(s) whenever the status bar is covered, and watch
 # for failure (window/title gone, fatal log line, or a modal that will not
 # clear). On failure, screenshot + dump log tail and return 1.
@@ -122,12 +122,12 @@ endurance_run() {
     mean=$(topbar_mean); mean=${mean%.*}
     if [ -n "$mean" ] && [ "$mean" -lt 28000 ] 2>/dev/null; then
       stuck=$((stuck + 1))
-      echo "[endur] modal at ${el}s (bar mean=$mean, streak=$stuck) — dismissing" | tee -a "$LOG"
+      echo "[endur] modal at ${el}s (bar mean=$mean, streak=$stuck), dismissing" | tee -a "$LOG"
       shot "endur_modal_${el}"
       # year-end can stack several panels; click both button positions a few times
       for _ in 1 2 3; do lua_do "click(575,706)"; sleep 1; lua_do "click(662,706)"; sleep 1; done
       if [ "$stuck" -ge 6 ]; then
-        echo "[endur] FAIL: modal would not clear after ${stuck} tries at ${el}s (~$years years) — likely error dialog" | tee -a "$LOG"
+        echo "[endur] FAIL: modal would not clear after ${stuck} tries at ${el}s (~$years years), likely error dialog" | tee -a "$LOG"
         shot "endur_fail_stuck_${el}"; tail -n 40 "${LOG_DIR}/game.log" >>"$LOG" 2>/dev/null || true
         return 1
       fi
@@ -141,7 +141,7 @@ endurance_run() {
   done
 }
 
-# play_town — light in-game activity that generates synced command traffic:
+# play_town: light in-game activity that generates synced command traffic:
 # left-click ground points (character move), interspersed with waits so the
 # game clock advances and both peers exchange state. $1 = iterations.
 play_town() {

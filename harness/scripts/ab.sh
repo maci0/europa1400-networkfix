@@ -22,7 +22,7 @@ freeze_client_game() {
   echo "[freeze] waiting for host server.dll send (town snapshot / first cmd)" | tee -a "$freeze_log"
   local waited=0
   # Lobby handshake is a 28-byte send. The next send (128 B) is the first
-  # real payload — freeze the client as soon as that line appears so the
+  # real payload. Freeze the client as soon as that line appears so the
   # host's subsequent send()s hit a stopped wineserver.
   while [[ $waited -lt 360 ]]; do
     if grep -qE 'send: called from server.dll:.*len=(1[2-9][0-9]|[2-9][0-9]{2,})' \
@@ -33,14 +33,14 @@ freeze_client_game() {
     waited=$((waited + 1))
   done
   if [[ $waited -ge 360 ]]; then
-    echo "[freeze] timed out waiting for host send (${waited}s) — no SIGSTOP" | tee -a "$freeze_log"
+    echo "[freeze] timed out waiting for host send (${waited}s), no SIGSTOP" | tee -a "$freeze_log"
     return 0
   fi
   echo "[freeze] saw host send >28 B at t=${waited}s" | tee -a "$freeze_log"
   local game_pid
   game_pid=$(tr -d '[:space:]' < "$HERE/logs/client/wine.pid" 2>/dev/null || true)
   if [[ -z "${game_pid:-}" ]]; then
-    echo "[freeze] no wine.pid from entrypoint — aborting freeze" | tee -a "$freeze_log"
+    echo "[freeze] no wine.pid from entrypoint, aborting freeze" | tee -a "$freeze_log"
     return 0
   fi
   # wineserver owns the TCP sockets; SIGSTOP of the PE process alone
@@ -55,7 +55,7 @@ freeze_client_game() {
   docker exec gilde-client sh -c "kill -STOP $pids; ps -o pid,stat,comm -p $(echo $pids | tr ' ' ',')" \
     2>&1 | tee -a "$freeze_log" || true
   if ! docker exec gilde-client sh -c "ps -o stat= -p $game_pid" 2>/dev/null | grep -q T; then
-    echo "[freeze] game pid $game_pid did not enter T state — aborting" | tee -a "$freeze_log"
+    echo "[freeze] game pid $game_pid did not enter T state, aborting" | tee -a "$freeze_log"
     docker exec gilde-client sh -c "kill -CONT $pids" 2>/dev/null || true
     return 0
   fi

@@ -21,7 +21,7 @@ export LOG_DIR
 
 mkdir -p "$LOG_DIR"
 if [[ "${CLEAN_PREFIX:-0}" != "0" ]]; then
-  echo "[entrypoint] CLEAN_PREFIX=1 — fresh prefix" | tee -a "$LOG_DIR/entrypoint.log" 2>&1 || true
+  echo "[entrypoint] CLEAN_PREFIX=1: fresh prefix" | tee -a "$LOG_DIR/entrypoint.log" 2>&1 || true
   rm -rf "$WINEPREFIX"; mkdir -p "$WINEPREFIX"
   xvfb-run --auto-servernum wine wineboot --init 2>&1 | tail -n 20 | tee -a "$LOG_DIR/entrypoint.log" 2>&1 || true
   for cand in "/harness/setup_the_guild_gold_2.0.0.5.exe" "/tmp/setup.exe"; do if [[ -f "$cand" ]]; then xvfb-run --auto-servernum wine "$cand" /VERYSILENT '/DIR=C:\Guild' 2>&1 | tail -n 40 | tee -a "$LOG_DIR/entrypoint.log" 2>&1 || true; break; fi; done
@@ -134,7 +134,7 @@ SCREENSHOT_PID=$!
 cleanup() { for _pid in "${FFMPEG_PID:-}" "${SCREENSHOT_PID:-}"; do kill "$_pid" 2>/dev/null || true; done; sleep 1; exit 0; }
 trap cleanup TERM INT
 
-# --- optional lua console (sister project europa1400-lua) — install BEFORE game so ASI autoloads ---
+# --- optional lua console (sister project europa1400-lua): install BEFORE game so ASI autoloads ---
 if [[ "${LUA_CONSOLE:-0}" == "1" && -f "/harness/luaapi.asi" ]]; then
   echo "[entrypoint] LUA_CONSOLE=1 installing luaapi.asi + lua scripts" | tee -a "$LOG_DIR/entrypoint.log"
   mkdir -p "$WINEPREFIX/drive_c/Guild/lua"

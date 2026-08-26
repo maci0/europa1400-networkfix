@@ -1,16 +1,28 @@
-# Video proof index
+# Video index
 
-## Host-native (Xwayland :92, radeonsi, no container) — clean
-- `proof_xwayland_50s_menu.mp4` — 24s menu→Network on isolated 1024x768 root (game 1030x748@0,0) — proves engine renders.
-- `proof_xwayland_12s_nav.mp4` — 12s Down×3→Network nav proof (host direct, no crash stay 30s verified).
-- `screenshot_menu_final.png` / `screenshot_network_final.png` / `screenshot_network_stay_host.png` — stills.
+These recordings are gitignored local captures, not repo files; see
+`README.md` in this directory for what is actually committed.
 
-## Container (gilde-host on Xwayland :92 privileged, gilde-client on Xvfb :99) — isolated net
-- `proof_host_xwayland_final.mp4` — 75s ffmpeg grab of :92 inside container; driver visits Network then evt poll crash at 0x42980D (container wine env vs host — see below).
-- `proof_client_xwayland_75s.mp4` removed? use harness/logs/client/record.mp4 (Xvfb :99 llvmpipe).
+## Host-native (Xwayland :92, radeonsi, no container)
+- `proof_xwayland_50s_menu.mp4`: 24s, game boots to the main menu on an
+  isolated 1024x768 root (game window 1030x748@0,0). Proves the engine
+  renders.
+- `proof_xwayland_12s_nav.mp4`: 12s, `Down×3` then `Network`, driven by
+  xdotool. No crash over a 30s stay.
 
-Known: 0x42980D is `fcn.00429800` polling `dword[0x6b7e94]+esi` evt table; container prefix leaves it NULL ~10s after boot (even staying on menu). Host direct allocates it (survives 30s on Network). Root cause is container wine missing init (GameuxInstallHelper / fonts); rizin shows fcn.00429920 allocates 0x64c00 evt entries — fails silently in container due to read-only/limited env. Workaround: use host-native proof for gameplay video; container proves isolated gilde-net + ffmpeg plumbing.
+## Container (gilde-host on Xwayland :92 privileged, gilde-client on Xvfb :99)
+- `proof_host_xwayland_final.mp4`: 75s ffmpeg grab of `:92` inside the
+  container. The driver reaches Network, then the evt poll faults at
+  `0x42980D` (see below).
+- `objective_1024_final.mp4`: 22s at 1024x768 after `windowmove 0,0`; host
+  and container both land at 0,0 with a 1030x748 client area.
 
-New 1024x768 objective: `objective_1024_final.mp4` (22s 1024x768, windowmove 0,0 — host and container both 0,0×1030x748 verified).
+`0x42980D` is `fcn.00429800` polling the `dword[0x6b7e94]+esi` evt table. The
+container prefix leaves that pointer NULL about 10s after boot, even sitting
+on the menu; a host-direct run allocates it and survives 30s on the Network
+screen. rizin shows `fcn.00429920` allocating 0x64c00 evt entries, which
+fails silently in the container. `HARNESS_EVT_GUARD=1` (see
+`harness/README.md`) guards the poll instead.
 
-All captures via `ffmpeg -video_size 1024x768 -f x11grab -i :92` (or :99) — same as entrypoint.
+All captures used `ffmpeg -video_size 1024x768 -f x11grab -i :92` (or `:99`),
+the same invocation as `entrypoint.sh`.

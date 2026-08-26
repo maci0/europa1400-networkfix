@@ -1,7 +1,7 @@
 #!/bin/bash
 # Client driver: joins the host's multiplayer game via in-process lua input
 # injection (see host.sh header for why xdotool clicks don't work).
-# Server discovery is LAN broadcast inside gilde-net — no IP entry needed.
+# Server discovery is LAN broadcast inside gilde-net: no IP entry needed.
 set -uo pipefail
 # shellcheck source-path=SCRIPTDIR
 if [ -f "$(dirname "$0")/common.sh" ]; then . "$(dirname "$0")/common.sh"; fi
@@ -23,13 +23,13 @@ xdotool windowmove "$WID" 0 0 2>/dev/null || true
 sleep 2
 
 if ! wait_lua_ready; then
-  echo "[driver:client] lua command loop not ready — cannot drive join" | tee -a "$LOG"
+  echo "[driver:client] lua command loop not ready, cannot drive join" | tee -a "$LOG"
   shot client_no_lua
   exit 0
 fi
 
 # Host needs ~50s from boot to lobby; open the browser slightly before that
-echo "[driver:client] lua ready — heading to server browser" | tee -a "$LOG"
+echo "[driver:client] lua ready, heading to server browser" | tee -a "$LOG"
 sleep 30
 
 lua_do "click(585,516)"; sleep 3                              # Network
@@ -51,10 +51,10 @@ for attempt in 1 2 3 4 5 6; do
   lua_do "click(578,730)"; sleep 4                            # Refresh, retry
 done
 shot client_lobby
-if [[ "$joined" == "1" ]]; then echo "[driver:client] joined lobby" | tee -a "$LOG"; else echo "[driver:client] join not confirmed — trying Ready anyway" | tee -a "$LOG"; fi
+if [[ "$joined" == "1" ]]; then echo "[driver:client] joined lobby" | tee -a "$LOG"; else echo "[driver:client] join not confirmed, trying Ready anyway" | tee -a "$LOG"; fi
 sleep 4   # lobby settle before Ready registers
 # Ready with confirmation: OWN row (second row, y205) gains "** Ready **".
-# Row 1 is the host's row — watching it false-confirms on the host's marker.
+# Row 1 is the host's row: watching it false-confirms on the host's marker.
 for r in 1 2 3 4 5; do
   echo "[driver:client] clicking Ready (attempt $r)" | tee -a "$LOG"
   base=$(crop_md5 200 205 350 28)

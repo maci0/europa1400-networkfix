@@ -1,4 +1,4 @@
--- harness_probe.lua — drop in lua/ dir; runs after luaapi init
+-- harness_probe.lua: drop in lua/ dir; runs after luaapi init
 -- Writes /tmp/lua_<name>.ok when UI condition seen.  Drivers poll via lua_probe(""Network"")
 local sys = system
 if not sys or not sys.window_info then
