@@ -42,7 +42,7 @@ TEST_SRCS := $(TEST_CORE_SRCS) $(MINHOOK_SRCS)
 CFLAGS := -I$(MINHOOK_DIR)/include -Isrc
 LDFLAGS := -lc -lws2_32 -lshlwapi -ladvapi32 -luser32
 
-.PHONY: all clean install test build-test check-zig format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
+.PHONY: all debug clean install test build-test check-zig format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
 
 # README documents bare `make` as building the release target.
 .DEFAULT_GOAL := all

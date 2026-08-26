@@ -7,4 +7,5 @@ AllowShortIfStatementsOnASingleLine: false
 # winsock2.h must precede windows.h (mingw requirement); alphabetical
 # sorting would reverse them and break every first-party translation unit.
 SortIncludes: Never
-
+# Missing trailing newlines break POSIX text tooling; lint catches them.
+InsertNewlineAtEOF: true
