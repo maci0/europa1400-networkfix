@@ -33,7 +33,17 @@ jobs:
         with:
           submodules: recursive
 
+      # The runner image's clang-format floats between major versions, which
+      # reflow differently; pin it so lint means the same thing here and
+      # locally. Version must match Makefile:CLANG_FORMAT_VERSION_EXPECTED.
+      - name: Set up clang-format 22.1.8
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
       - name: Lint (clang-format)
+        env:
+          CLANG_FORMAT: uvx clang-format@22.1.8
         run: make lint
 
       - name: Static analysis (cppcheck + shellcheck)

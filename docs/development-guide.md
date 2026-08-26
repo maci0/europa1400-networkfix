@@ -22,7 +22,7 @@ This guide covers everything needed to build, modify, debug, and contribute to t
 **Required Tools:**
 - [Zig](https://ziglang.org/download/) 0.16.0 (pinned: `make check-zig` verifies, CI caches `~/.zig`)
 - [Make for Windows](http://gnuwin32.sourceforge.net/packages/make.htm) or use Git Bash
-- [clang-format](https://releases.llvm.org/download.html) (optional: `make format` / `make lint`)
+- [clang-format](https://releases.llvm.org/download.html) 22.1.8 exactly, for `make format` / `make lint` (`uvx clang-format@22.1.8` if your distro ships another version)
 
 **Recommended IDEs:**
 - Visual Studio Code with C/C++ extension
@@ -42,7 +42,9 @@ zig version  # Verify installation
 **Required Tools:**
 ```bash
 # Ubuntu/Debian
-sudo apt-get install make clang-format git
+sudo apt-get install make git
+# clang-format must be 22.1.8 (see Code Style Guidelines); distro packages
+# usually are not, so run it pinned: uvx clang-format@22.1.8
 
 # Arch Linux
 sudo pacman -S make clang git
@@ -69,7 +71,9 @@ zig version  # must print 0.16.0 or `make check-zig` will fail
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Install dependencies
-brew install make clang-format git
+brew install make git
+# clang-format must be 22.1.8 (see Code Style Guidelines); use
+# uvx clang-format@22.1.8 if brew ships another version
 
 # Install Zig 0.16.0 (must match Makefile:ZIG_VERSION_EXPECTED)
 brew install zig
@@ -203,16 +207,30 @@ europa1400-networkfix/
 
 ### Formatting
 
-Use clang-format for consistent formatting:
 ```bash
-make format  # Format all source files
+make format  # rewrite in place
+make lint    # check without touching anything
 ```
+
+Both require clang-format **22.1.8** exactly, the version pinned in
+`Makefile:CLANG_FORMAT_VERSION_EXPECTED`; `make` refuses to run either target
+under a different one. Major versions reflow differently, so an unpinned tool
+makes `make lint` pass locally and fail in CI. If your distribution ships a
+different version, point the target at a pinned one:
+
+```bash
+CLANG_FORMAT="uvx clang-format@22.1.8" make lint
+```
+
+CI does exactly that (see `.github/workflows/build.yml`). Bumping the version
+means bumping it in both places and committing the reformat it produces.
 
 See [.clang-format](../.clang-format) for rules:
 - **Indent:** 4 spaces (no tabs)
 - **Braces:** Allman style (braces on new line)
-- **Line length:** 120 characters max
+- **Line length:** 100 columns (`ColumnLimit`)
 - **Pointer alignment:** Right-aligned (`char *ptr`)
+- **Trailing newline:** required (`InsertNewlineAtEOF`)
 
 ### Naming Conventions
 

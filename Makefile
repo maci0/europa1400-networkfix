@@ -1,5 +1,10 @@
 ZIG ?= zig
 ZIG_VERSION_EXPECTED := 0.16.0
+# Pinned: clang-format reflows differently between major versions, so an
+# unpinned tool silently turns `make lint` into "whatever the runner shipped
+# this month". CI installs this exact version (.github/workflows/build.yml).
+CLANG_FORMAT ?= clang-format
+CLANG_FORMAT_VERSION_EXPECTED := 22.1.8
 WINE ?= wine
 TARGET := bin/networkfix.asi
 DEBUG_TARGET := bin/networkfix-debug.asi
@@ -42,7 +47,7 @@ TEST_SRCS := $(TEST_CORE_SRCS) $(MINHOOK_SRCS)
 CFLAGS := -I$(MINHOOK_DIR)/include -Isrc
 LDFLAGS := -lc -lws2_32 -lshlwapi -ladvapi32 -luser32
 
-.PHONY: all debug clean install test build-test check-zig format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
+.PHONY: all debug clean install test build-test check-zig check-clang-format format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
 
 # README documents bare `make` as building the release target.
 .DEFAULT_GOAL := all
@@ -50,6 +55,10 @@ LDFLAGS := -lc -lws2_32 -lshlwapi -ladvapi32 -luser32
 check-zig:
 	@$(ZIG) version | grep -q "$(ZIG_VERSION_EXPECTED)" || \
 		(echo "ERROR: Zig $(ZIG_VERSION_EXPECTED) required, got $$( $(ZIG) version)" && exit 1)
+
+check-clang-format:
+	@$(CLANG_FORMAT) --version | grep -q "$(CLANG_FORMAT_VERSION_EXPECTED)" || \
+		(echo "ERROR: clang-format $(CLANG_FORMAT_VERSION_EXPECTED) required, got $$( $(CLANG_FORMAT) --version)" && exit 1)
 
 all: check-zig $(TARGET)
 
@@ -98,13 +107,13 @@ clean:
 	rm -f bin/*.asi bin/*.exe bin/*.pdb bin/*.lib 2>/dev/null; rm -f bin/verify*/*.asi 2>/dev/null || true
 
 # Rewrite formatting in place. lint checks; format fixes.
-format:
-	clang-format -i src/*.c src/*.h test/*.c
+format: check-clang-format
+	$(CLANG_FORMAT) -i src/*.c src/*.h test/*.c
 
 # Verify formatting without mutating anything. Checks the working tree
 # directly (not git state), so it behaves identically locally and in CI.
-lint:
-	clang-format --dry-run --Werror src/*.c src/*.h test/*.c
+lint: check-clang-format
+	$(CLANG_FORMAT) --dry-run --Werror src/*.c src/*.h test/*.c
 
 # Static analysis over first-party code; both targets must pass with zero
 # findings (inline cppcheck suppressions carry an in-code justification).

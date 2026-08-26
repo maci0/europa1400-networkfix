@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FASTSYNC_SLEEP_MS`, `INIT_THREAD_JOIN_TIMEOUT_MS`, `PROLOGUE_MIN_BYTES`.
 - `make lint` now enforces a trailing newline (`InsertNewlineAtEOF`); nine
   tracked files were missing one.
+- clang-format is pinned to 22.1.8 and checked like Zig already was. `make
+  lint` previously ran whatever the runner image happened to ship, so a
+  version bump under CI could fail `main` with no change on our side; it did,
+  on this release. CI installs the pinned version via uvx.
 - Docs: removed a README diagnostic step that told readers to uncomment debug
   lines that do not exist, corrected the test count, collapsed two duplicate
   documentation indexes, and replaced the "manual testing TODO" and its
