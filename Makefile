@@ -10,6 +10,11 @@ CLANG_FORMAT_VERSION_EXPECTED := 22.1.8
 # binary makes `make analyze` mean different things on different machines.
 SHELLCHECK ?= shellcheck
 SHELLCHECK_VERSION_EXPECTED := 0.11.0
+# Pinned likewise. cppcheck has no upstream binary release, so both CI and the
+# documented local override run it from the cppcheck-wheel PyPI package
+# (`uvx --from cppcheck==1.5.1 cppcheck`), which ships 2.17.1.
+CPPCHECK ?= cppcheck
+CPPCHECK_VERSION_EXPECTED := 2.17.1
 WINE ?= wine
 TARGET := bin/networkfix.asi
 DEBUG_TARGET := bin/networkfix-debug.asi
@@ -52,7 +57,7 @@ TEST_SRCS := $(TEST_CORE_SRCS) $(MINHOOK_SRCS)
 CFLAGS := -I$(MINHOOK_DIR)/include -Isrc
 LDFLAGS := -lc -lws2_32 -lshlwapi -ladvapi32 -luser32
 
-.PHONY: all debug clean install test build-test check-zig check-clang-format check-shellcheck format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
+.PHONY: all debug clean install test build-test check-zig check-clang-format check-shellcheck check-cppcheck format lint analyze analyze-cppcheck analyze-shellcheck verify dist sbom
 
 # README documents bare `make` as building the release target.
 .DEFAULT_GOAL := all
@@ -68,6 +73,10 @@ check-clang-format:
 check-shellcheck:
 	@$(SHELLCHECK) --version | grep -q "version: $(SHELLCHECK_VERSION_EXPECTED)" || \
 		(echo "ERROR: shellcheck $(SHELLCHECK_VERSION_EXPECTED) required, got $$( $(SHELLCHECK) --version | grep version:)" && exit 1)
+
+check-cppcheck:
+	@$(CPPCHECK) --version | grep -q "Cppcheck $(CPPCHECK_VERSION_EXPECTED)" || \
+		(echo "ERROR: cppcheck $(CPPCHECK_VERSION_EXPECTED) required, got $$( $(CPPCHECK) --version)" && exit 1)
 
 all: check-zig $(TARGET)
 
@@ -128,8 +137,8 @@ lint: check-clang-format
 # findings (inline cppcheck suppressions carry an in-code justification).
 analyze: analyze-cppcheck analyze-shellcheck
 
-analyze-cppcheck:
-	cppcheck --error-exitcode=2 --inline-suppr --check-level=exhaustive \
+analyze-cppcheck: check-cppcheck
+	$(CPPCHECK) --error-exitcode=2 --inline-suppr --check-level=exhaustive \
 	--enable=warning,style,portability,performance,unusedFunction \
 	--std=c11 --platform=win32A -D_M_IX86=600 -D__GNUC__=4 \
 	-I$(MINHOOK_DIR)/include -Isrc $(CORE_SRCS) test/test_hooks.c

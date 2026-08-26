@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- cppcheck is pinned to 2.17.1, closing the last unpinned gate. It publishes
+  no binary release, so CI and the documented local override both run it from
+  the `cppcheck-wheel` PyPI package (1.5.1 ships 2.17.1). `make analyze` now
+  means the same thing on every machine.
+- CI: bumped actions/checkout to v7.0.1, actions/cache to v6.1.0,
+  actions/upload-artifact to v7.0.1, softprops/action-gh-release to v3.0.2 and
+  actions/attest-build-provenance to v4.2.2. Rewriting history made dependabot
+  close its five open bump PRs, so they are applied directly here.
+- CI: raised the job timeout from 15 to 30 minutes. A normal run takes about
+  3, but the wine+wine32+xvfb apt install passed 12 on a slow mirror and
+  cancelled the v0.4.0 tag build.
+
 ## [0.4.0] - 2026-08-26
 
 ### Fixed
@@ -82,8 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - shellcheck is pinned to 0.11.0 the same way, installed in CI from the
   upstream release with a checksum. Check IDs move between releases, so the
   apt build reported SC2317/SC2015 on scripts that pass here. cppcheck stays
-  on apt; it has no upstream binary release to pin to, and the Makefile and
-  development guide now say so instead of implying the gate is reproducible.
+  on apt in this release; the Makefile and development guide say so rather
+  than implying the whole gate is reproducible.
 - `harness/drivers/common.sh`: `hide_lua_console` used `A && B || C`, which
   runs C when B fails too. Rewritten as an `if`.
 - `make analyze` was never documented; the development guide now covers it,

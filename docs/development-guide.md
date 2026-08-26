@@ -245,12 +245,18 @@ why the finding does not apply (`// cppcheck-suppress <id>` on the line
 above, `# shellcheck disable=SCxxxx` for scripts); do not widen a check or
 drop a file from the list instead.
 
-shellcheck is pinned to **0.11.0** (`Makefile:SHELLCHECK_VERSION_EXPECTED`),
-which CI installs from the upstream release with a checksum. Check IDs move
-between releases (0.9 reports SC2317 where 0.11 reports SC2329), so an
-unpinned binary gives different results per machine. cppcheck is not pinned:
-it has no upstream binary release, so it comes from apt and a runner image
-bump can surface new findings.
+Both analysers are pinned, because check IDs and heuristics move between
+releases (shellcheck 0.9 reports SC2317 where 0.11 reports SC2329), so an
+unpinned binary gives different results per machine:
+
+| Tool | Version | Where CI gets it | Local override |
+|------|---------|------------------|----------------|
+| shellcheck | 0.11.0 | upstream release tarball, checksummed | `SHELLCHECK=...` |
+| cppcheck | 2.17.1 | `cppcheck-wheel` on PyPI (no upstream binary release exists) | `CPPCHECK="uvx --from cppcheck==1.5.1 cppcheck"` |
+
+Versions live in `Makefile:{SHELLCHECK,CPPCHECK}_VERSION_EXPECTED` and the
+targets refuse to run under a different one. Note the two version numbers for
+cppcheck: `cppcheck-wheel` 1.5.1 is the package that ships cppcheck 2.17.1.
 
 ### Naming Conventions
 
