@@ -2,7 +2,7 @@
 #define HOOKS_H
 
 // winsock2.h must precede windows.h (mingw warns otherwise)
-#include <stdbool.h>
+#include "sha256.h"
 #include <stdint.h>
 #include <winsock2.h>
 #include <windows.h>
@@ -30,15 +30,18 @@ typedef int(__cdecl *srv_gameStreamReader_t)(int *ctx, int received, int totalLe
 #ifdef NETWORKFIX_TEST
 extern BOOL g_test_force_caller_server;
 /* Internals exposed so the Wine test suite can drive them directly. */
-BOOL              is_safe_server_path(const char *path);
-BOOL              path_is_within_dir(const char *path, const char *dir);
-BOOL              server_hash_mismatch(const char pre[65], const char post[65]);
+BOOL is_safe_server_path(const char *path);
+BOOL path_is_within_dir(const char *path, const char *dir);
+BOOL server_hash_mismatch(const char pre[SHA256_HEX_SIZE], const char post[SHA256_HEX_SIZE]);
 IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void);
 BOOL              init_server_module(void);
 void              reset_server_globals(void);
 extern HMODULE    g_hServerDll;
 extern DWORD      g_server_rva;
 extern size_t     g_server_size;
+/* A/B baseline switch (NETWORKFIX_DISABLE) and the socket option it gates. */
+extern BOOL g_fix_active;
+void        maybe_set_nodelay(SOCKET s);
 /* Original-function trampolines; writable mocks in the test build. */
 extern int(WSAAPI *real_recv)(SOCKET, char *, int, int);
 extern int(WSAAPI *real_send)(SOCKET, const char *, int, int);

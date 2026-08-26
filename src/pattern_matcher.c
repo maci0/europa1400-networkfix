@@ -55,6 +55,31 @@ static const unsigned char SRV_GAMESTREAMREADER_MASK[] = {
 
 #define SRV_GAMESTREAMREADER_PATTERN_SIZE (sizeof(SRV_GAMESTREAMREADER_PATTERN))
 
+/* The mask must stay parallel to the pattern byte-for-byte. */
+_Static_assert(sizeof(SRV_GAMESTREAMREADER_PATTERN) == sizeof(SRV_GAMESTREAMREADER_MASK),
+               "pattern and mask lengths differ");
+
+/* Offsets of the two wildcarded rel32 branches inside the pattern; validated
+ * below so a reordered pattern cannot silently desync these indices. */
+enum
+{
+    PATTERN_JZ_OPCODE_OFF = 17,
+    PATTERN_JNZ_OPCODE_OFF = 27
+};
+_Static_assert(SRV_GAMESTREAMREADER_PATTERN[PATTERN_JZ_OPCODE_OFF] == 0x0F &&
+                   SRV_GAMESTREAMREADER_PATTERN[PATTERN_JZ_OPCODE_OFF + 1] == 0x84,
+               "JZ offset does not point at 0F 84");
+_Static_assert(SRV_GAMESTREAMREADER_PATTERN[PATTERN_JNZ_OPCODE_OFF] == 0x0F &&
+                   SRV_GAMESTREAMREADER_PATTERN[PATTERN_JNZ_OPCODE_OFF + 1] == 0x85,
+               "JNZ offset does not point at 0F 85");
+
+/* Bytes that must be readable at the candidate RVA before the prologue checks
+ * below dereference it: the furthest read is the JNZ rel32 operand and the
+ * 4 bytes following it. */
+#define PROLOGUE_MIN_BYTES 50
+_Static_assert(PROLOGUE_MIN_BYTES >= PATTERN_JNZ_OPCODE_OFF + 6,
+               "prologue window shorter than the branches it validates");
+
 /**
  * Validates that the rel32 target of a two-byte-opcode branch (0F 84/85)
  * starting at `opcode_off` bytes into the function stays inside the module.
@@ -133,7 +158,9 @@ PATTERN_STATIC long find_pattern_in_memory(const unsigned char *haystack, size_t
 PATTERN_STATIC BOOL validate_function_prologue(const unsigned char *base_addr, DWORD rva_offset,
                                                size_t module_size)
 {
-    if (rva_offset + 50 >= module_size) // Need at least 50 bytes for validation
+    /* Widened before the addition: rva_offset is a 32-bit DWORD and an
+     * in-registry near-4G value would wrap around size_t here and pass. */
+    if ((uint64_t)rva_offset + PROLOGUE_MIN_BYTES >= module_size)
     {
         return FALSE;
     }
@@ -148,15 +175,16 @@ PATTERN_STATIC BOOL validate_function_prologue(const unsigned char *base_addr, D
     }
 
     // 2. Validate the conditional jump targets stay inside the module.
-    // JZ (0F 84) sits at offset 17, JNZ (0F 85) at offset 27 of the pattern.
-    if (func_start[17] == 0x0F && func_start[18] == 0x84 &&
-        !branch_target_in_bounds(func_start, 17, rva_offset, module_size))
+    if (func_start[PATTERN_JZ_OPCODE_OFF] == 0x0F &&
+        func_start[PATTERN_JZ_OPCODE_OFF + 1] == 0x84 &&
+        !branch_target_in_bounds(func_start, PATTERN_JZ_OPCODE_OFF, rva_offset, module_size))
     {
         return FALSE;
     }
 
-    if (func_start[27] == 0x0F && func_start[28] == 0x85 &&
-        !branch_target_in_bounds(func_start, 27, rva_offset, module_size))
+    if (func_start[PATTERN_JNZ_OPCODE_OFF] == 0x0F &&
+        func_start[PATTERN_JNZ_OPCODE_OFF + 1] == 0x85 &&
+        !branch_target_in_bounds(func_start, PATTERN_JNZ_OPCODE_OFF, rva_offset, module_size))
     {
         return FALSE;
     }

@@ -23,6 +23,7 @@
 #include <string.h>
 #include <windows.h>
 #include <winsock2.h>
+#include <ws2tcpip.h>
 
 /* Test seams: hooks.h (NETWORKFIX_TEST block) declares the hooks.c globals
  * and internals, pattern_matcher.h declares the pattern matcher internals;
@@ -420,6 +421,38 @@ static void test_send_max_retries_keeps_partial_progress(void)
     check_captured_bytes(msg, 4);
 }
 
+/* TCP_NODELAY is part of the fix, not of the harness: with the A/B baseline
+ * active (NETWORKFIX_DISABLE=1 -> g_fix_active FALSE) the socket must keep the
+ * game's original Nagle behaviour, or every baseline measurement is really
+ * measuring a half-patched build. Uses a real socket: the option is observed
+ * through getsockopt, not through a mock. */
+static int nodelay_of(SOCKET s)
+{
+    int cur = 0;
+    int len = sizeof(cur);
+    if (getsockopt(s, IPPROTO_TCP, TCP_NODELAY, (char *)&cur, &len) != 0)
+        return -1;
+    return cur ? 1 : 0;
+}
+
+static void test_nodelay_skipped_when_fix_inactive(void)
+{
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    CHECK(s != INVALID_SOCKET, "socket() failed: %d", WSAGetLastError());
+    CHECK(nodelay_of(s) == 0, "fresh socket should start with Nagle on, got %d", nodelay_of(s));
+
+    g_fix_active = FALSE;
+    maybe_set_nodelay(s);
+    CHECK(nodelay_of(s) == 0, "baseline (g_fix_active=FALSE) must leave Nagle on, got %d",
+          nodelay_of(s));
+
+    g_fix_active = TRUE;
+    maybe_set_nodelay(s);
+    CHECK(nodelay_of(s) == 1, "fix active must set TCP_NODELAY, got %d", nodelay_of(s));
+
+    closesocket(s);
+}
+
 /* send: non-server caller bypasses retry — raw WSAEWOULDBLOCK propagates */
 static void test_send_non_server_passthrough(void)
 {
@@ -661,6 +694,18 @@ static void test_validate_rejects_when_too_close_to_end(void)
     CHECK(ok == FALSE, "expected FALSE when fewer than 50 bytes remain, got %d", ok);
 }
 
+/* A near-4G rva_offset must be rejected by the size gate itself: the addition
+ * is widened to 64-bit, so the sum cannot wrap into a small in-range value
+ * and send the prologue reads outside the fixture (regression for 32-bit
+ * DWORD arithmetic). */
+static void test_validate_rejects_rva_offset_near_uint32_max(void)
+{
+    unsigned char blob[128];
+    build_valid_prologue(blob, sizeof(blob), 5, 5);
+    BOOL ok = validate_function_prologue(blob, 0xFFFFFFFEu, sizeof(blob));
+    CHECK(ok == FALSE, "expected FALSE on near-4G rva_offset, got %d", ok);
+}
+
 /* Signed rel32 targets can point backwards; a target below the module base
  * must be rejected just like one past the end. */
 static void test_validate_rejects_negative_jump_targets(void)
@@ -807,7 +852,7 @@ static void test_sha256_deterministic_and_collision_free_for_distinct_inputs(voi
     CHECK(write_temp_file_tmp("hello world!", 12, p2, MAX_PATH) == TRUE,
           "could not write temp file p2");
 
-    char h1[65] = {0}, h1_again[65] = {0}, h2[65] = {0};
+    char h1[SHA256_HEX_SIZE] = {0}, h1_again[SHA256_HEX_SIZE] = {0}, h2[SHA256_HEX_SIZE] = {0};
     CHECK(calculate_file_sha256(p1, h1, sizeof(h1)) == TRUE, "hash p1 failed");
     CHECK(calculate_file_sha256(p1, h1_again, sizeof(h1_again)) == TRUE, "hash p1 again failed");
     CHECK(calculate_file_sha256(p2, h2, sizeof(h2)) == TRUE, "hash p2 failed");
@@ -825,7 +870,7 @@ static void test_sha256_empty_file(void)
     wchar_t path[MAX_PATH];
     CHECK(write_temp_file_tmp("", 0, path, MAX_PATH) == TRUE, "could not write temp file");
 
-    char hash[65] = {0};
+    char hash[SHA256_HEX_SIZE] = {0};
     BOOL ok = calculate_file_sha256(path, hash, sizeof(hash));
     CHECK(ok == TRUE, "calculate_file_sha256 failed");
     CHECK(is_lowercase_hex_64(hash), "hash not 64 lowercase hex chars: %s", hash);
@@ -858,7 +903,7 @@ static void test_sha256_fips_known_answers(void)
                                   MAX_PATH) == TRUE,
               "vector %lu: could not write temp file", i);
 
-        char hash[65] = {0};
+        char hash[SHA256_HEX_SIZE] = {0};
         CHECK(calculate_file_sha256(path, hash, sizeof(hash)) == TRUE, "vector %lu: hash failed",
               i);
         CHECK(strcmp(hash, vectors[i].hash) == 0, "vector %lu mismatch: got %s", i, hash);
@@ -869,7 +914,7 @@ static void test_sha256_fips_known_answers(void)
 
 static void test_sha256_missing_file_returns_false(void)
 {
-    char hash[65] = {0};
+    char hash[SHA256_HEX_SIZE] = {0};
     BOOL ok = calculate_file_sha256(L"does_not_exist_xyz.bin", hash, sizeof(hash));
     CHECK(ok == FALSE, "expected FALSE on missing file, got TRUE");
 }
@@ -1275,7 +1320,7 @@ static void run_fixture_tests(const wchar_t *fixture_path)
                         NULL);
     printf("  fixture: %s\n", fixture_path_a);
 
-    char hash[65] = {0};
+    char hash[SHA256_HEX_SIZE] = {0};
     CHECK(calculate_file_sha256(fixture_path, hash, sizeof(hash)) == TRUE, "hash failed");
     CHECK(is_lowercase_hex_64(hash), "hash not 64 lowercase hex chars: %s", hash);
 
@@ -1569,8 +1614,10 @@ static void test_log_msg_exact_fit_line_terminated(void)
  * never fire, which would silently disable the replacement detection). */
 static void test_server_hash_mismatch_compares_pre_and_post(void)
 {
-    const char h1[65] = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    const char h2[65] = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    const char h1[SHA256_HEX_SIZE] =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const char h2[SHA256_HEX_SIZE] =
+        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
     CHECK(server_hash_mismatch(h1, h1) == FALSE, "identical hashes must not mismatch");
     CHECK(server_hash_mismatch(h1, h2) == TRUE, "differing hashes must report a mismatch");
 }
@@ -1579,8 +1626,9 @@ static void test_server_hash_mismatch_compares_pre_and_post(void)
  * of tampering, so the gate stays open. */
 static void test_server_hash_mismatch_ignores_missing_hashes(void)
 {
-    const char h1[65] = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    const char empty[65] = "";
+    const char h1[SHA256_HEX_SIZE] =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const char empty[SHA256_HEX_SIZE] = "";
     CHECK(server_hash_mismatch(empty, h1) == FALSE, "missing pre-hash must not mismatch");
     CHECK(server_hash_mismatch(h1, empty) == FALSE, "missing post-hash must not mismatch");
     CHECK(server_hash_mismatch(empty, empty) == FALSE, "both hashes missing must not mismatch");
@@ -1609,6 +1657,7 @@ int main(void)
     RUN(test_send_max_retries_zero_progress_returns_timeout);
     RUN(test_send_max_retries_keeps_partial_progress);
     RUN(test_send_non_server_passthrough);
+    RUN(test_nodelay_skipped_when_fix_inactive);
     RUN(test_recv_non_server_passthrough);
 
     RUN(test_srv_null_ctx_returns_minus_one);
@@ -1629,6 +1678,7 @@ int main(void)
     RUN(test_validate_rejects_jnz_out_of_bounds);
     RUN(test_validate_rejects_negative_jump_targets);
     RUN(test_validate_rejects_when_too_close_to_end);
+    RUN(test_validate_rejects_rva_offset_near_uint32_max);
 
     RUN(test_scan_accepts_first_valid_skips_earlier_invalid);
     RUN(test_scan_reports_validation_failed_when_all_rejected);

@@ -14,7 +14,6 @@
 #include "versions.h"
 #include <psapi.h>
 #include <shlwapi.h>
-#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,6 +68,22 @@ static BOOL env_opt_out(const char *name)
     return GetEnvironmentVariableA(name, value, sizeof(value)) == 1 && value[0] == '0';
 }
 
+/* One-shot env resolution shared by the per-socket/per-hook gates below.
+ * Env is immutable for the process lifetime, so concurrent first callers
+ * (UI thread + server.dll pump thread) always resolve the same value; the
+ * interlocked publish just keeps a single writer per slot instead of an
+ * unsynchronized check-then-act data race. `slot` holds -1 until resolved. */
+typedef LONG (*env_reader_fn)(void);
+static LONG env_once(volatile LONG *slot, env_reader_fn read_value)
+{
+    LONG resolved = InterlockedCompareExchange(slot, -1, -1);
+    if (resolved != -1)
+        return resolved;
+    resolved = read_value();
+    InterlockedCompareExchange(slot, resolved, -1);
+    return resolved;
+}
+
 /* Per-socket options below are (re-)applied idempotently instead of being
  * remembered per handle: winsock recycles SOCKET values after closesocket,
  * so a remember-once table keyed on the handle could suppress the option on
@@ -108,11 +123,11 @@ static void pump_pending_messages(void)
 #endif
 
 // Global state
-static BOOL g_HooksInitialized = false;
-// When false (NETWORKFIX_DISABLE=1) the ws2/stream hooks are still installed
+static BOOL g_HooksInitialized = FALSE;
+// When FALSE (NETWORKFIX_DISABLE=1) the ws2/stream hooks are still installed
 // (so harness fault-injection, tracing and fastsync keep working) but they
 // pass through with the game's original semantics: this is the A/B baseline.
-static BOOL g_fix_active = true;
+HOOK_STATIC BOOL g_fix_active = TRUE;
 #ifdef NETWORKFIX_TEST
 /* Test build: state visible so tests can assert the fallback contract and
  * drive the PE import-table walk directly. */
@@ -139,12 +154,12 @@ HOOK_STATIC srv_gameStreamReader_t real_srv_gameStreamReader = NULL;
  * Detect server.dll version by calculating its SHA256 hash.
  * Gets the module path and returns the RVA offset using pattern matching.
  *
- * @param file_hash_out Buffer (65 bytes) receiving the lowercase hex SHA256
+ * @param file_hash_out Buffer (SHA256_HEX_SIZE bytes) receiving the lowercase hex SHA256
  *                      of the loaded server.dll; the caller reuses it as the
  *                      post-load hash instead of re-reading the file.
  * @return RVA offset for the target function, or 0 if pattern matching fails
  */
-static DWORD detect_server_version(char *file_hash_out /* [65] */)
+static DWORD detect_server_version(char *file_hash_out /* [SHA256_HEX_SIZE] */)
 {
     if (!g_hServerDll)
     {
@@ -162,14 +177,13 @@ static DWORD detect_server_version(char *file_hash_out /* [65] */)
     }
 
     // Calculate file hash directly from wide path
-    char *fileHash = file_hash_out;
-    if (!fileHash || !calculate_file_sha256(serverPath, fileHash, 65))
+    if (!file_hash_out || !calculate_file_sha256(serverPath, file_hash_out, SHA256_HEX_SIZE))
     {
         log_msg("[HOOK] Failed to calculate SHA256 for server.dll");
         return 0;
     }
 
-    log_msg("[HOOK] server.dll SHA256: %s", fileHash);
+    log_msg("[HOOK] server.dll SHA256: %s", file_hash_out);
 
     // Try pattern matching first
     DWORD                pattern_rva = 0;
@@ -186,7 +200,7 @@ static DWORD detect_server_version(char *file_hash_out /* [65] */)
     // Fallback to SHA256-based version lookup
     for (int i = 0; known_versions[i].sha256_hash != NULL; i++)
     {
-        if (strcmp(fileHash, known_versions[i].sha256_hash) == 0)
+        if (strcmp(file_hash_out, known_versions[i].sha256_hash) == 0)
         {
             log_msg("[HOOK] Fallback: Detected %s version (RVA: 0x%X)",
                     known_versions[i].version_name, known_versions[i].target_rva);
@@ -194,7 +208,7 @@ static DWORD detect_server_version(char *file_hash_out /* [65] */)
         }
     }
 
-    log_msg("[HOOK] Unknown server.dll version with hash: %s", fileHash);
+    log_msg("[HOOK] Unknown server.dll version with hash: %s", file_hash_out);
     return 0;
 }
 
@@ -356,10 +370,10 @@ static BOOL load_server_dll(const char *serverPath)
 
 /**
  * Best-effort TOCTOU pre-hash of `path` resolved against the module dir.
- * Fills `out` (65 bytes) and returns TRUE when the file could be hashed.
+ * Fills `out` (SHA256_HEX_SIZE bytes) and returns TRUE when the file could be hashed.
  * Failure is tolerated: the load proceeds with post-load detection only.
  */
-static BOOL preload_hash_server_file(const char *path, char out[65])
+static BOOL preload_hash_server_file(const char *path, char out[SHA256_HEX_SIZE])
 {
     // Build absolute file path for pre-hash (best-effort)
     char    module_dir[MAX_PATH] = {0};
@@ -367,7 +381,7 @@ static BOOL preload_hash_server_file(const char *path, char out[65])
     wchar_t wpath[MAX_PATH];
     if (!get_module_dir(g_hModule, module_dir) || !PathCombineA(file_path, module_dir, path) ||
         MultiByteToWideChar(CP_ACP, 0, file_path, -1, wpath, MAX_PATH) == 0 ||
-        !calculate_file_sha256(wpath, out, 65))
+        !calculate_file_sha256(wpath, out, SHA256_HEX_SIZE))
     {
         // Tolerated (load proceeds with post-load detection only), but say why
         // the pre-load TOCTOU check is absent from the log.
@@ -384,7 +398,8 @@ static BOOL preload_hash_server_file(const char *path, char out[65])
  * the mapped module (TOCTOU replacement signal). An empty string means the
  * respective hash is unavailable, which cannot constitute a mismatch.
  */
-PATH_STATIC BOOL server_hash_mismatch(const char pre[65], const char post[65])
+PATH_STATIC BOOL server_hash_mismatch(const char pre[SHA256_HEX_SIZE],
+                                      const char post[SHA256_HEX_SIZE])
 {
     return pre[0] != '\0' && post[0] != '\0' && strcmp(pre, post) != 0;
 }
@@ -414,7 +429,7 @@ PATH_STATIC BOOL init_server_module(void)
     // If file can't be hashed pre-load, fall back to post-load detection only.
     // Optional allowlist: if hash known, we know it's whitelisted; if not,
     // we still allow load but pattern matcher must succeed post-load.
-    char preHash[65] = {0};
+    char preHash[SHA256_HEX_SIZE] = {0};
 
     BOOL loaded = FALSE;
     if (serverPath)
@@ -438,7 +453,7 @@ PATH_STATIC BOOL init_server_module(void)
     // Load, validate, and detect version (pattern matcher does post-load validation)
     // The hash computed here is a post-LoadLibrary read of the mapped module's
     // file; reuse it as the TOCTOU post-hash instead of hashing a third time.
-    char postHash[65] = {0};
+    char postHash[SHA256_HEX_SIZE] = {0};
     if (!loaded || (g_server_rva = detect_server_version(postHash)) == 0)
     {
         reset_server_globals();
@@ -537,20 +552,20 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
     int ret = real_srv_gameStreamReader(ctx, received, totalLen);
 
     // Apply fixes to prevent network instability
-    BOOL modified = false;
+    BOOL modified = FALSE;
     if (ctx[SRV_CTX_ERROR_INDEX] < 0)
     {
         log_msg("[SERVER HOOK] srv_gameStreamReader: Fixed negative ctx[%d] (%d -> 0)",
                 SRV_CTX_ERROR_INDEX, ctx[SRV_CTX_ERROR_INDEX]);
         ctx[SRV_CTX_ERROR_INDEX] = 0;
-        modified = true;
+        modified = TRUE;
     }
 
     if (ret < 0)
     {
         log_msg("[SERVER HOOK] srv_gameStreamReader: Fixed negative return value (%d -> 0)", ret);
         ret = 0;
-        modified = true;
+        modified = TRUE;
     }
 
     if (modified)
@@ -570,26 +585,21 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
  * delayed-ACK Nagle adds up to a full delayed-ACK interval (~40ms on Linux) of
  * latency per exchange. Disabling it is safe for this traffic shape and only
  * helps. Applied once per server.dll socket; part of the fix, so the A/B
- * baseline (g_fix_active=false) keeps the original Nagle behaviour. Force
+ * baseline (g_fix_active=FALSE) keeps the original Nagle behaviour. Force
  * Nagle back on for testing with NETWORKFIX_NODELAY=0. */
-static void maybe_set_nodelay(SOCKET s)
+static LONG read_nodelay_env(void)
+{
+    // Default on; only "0" disables.
+    return env_opt_out("NETWORKFIX_NODELAY") ? 0 : 1;
+}
+
+HOOK_STATIC void maybe_set_nodelay(SOCKET s)
 {
     if (!g_fix_active)
         return;
 
-    /* Env is immutable for the process lifetime, so concurrent first callers
-     * (UI thread + server.dll pump thread) always resolve the same value;
-     * the interlocked publish just keeps a single writer per flag instead of
-     * an unsynchronized check-then-act data race. */
-    static LONG enabled = -1; // -1 unknown, 0 off, 1 on
-    LONG        resolved = InterlockedCompareExchange(&enabled, -1, -1);
-    if (resolved == -1)
-    {
-        // Default on; only "0" disables.
-        resolved = env_opt_out("NETWORKFIX_NODELAY") ? 0 : 1;
-        InterlockedCompareExchange(&enabled, resolved, -1);
-    }
-    if (resolved == 0)
+    static volatile LONG enabled = -1; // -1 unknown, 0 off, 1 on
+    if (env_once(&enabled, read_nodelay_env) == 0)
         return;
 
     /* Check the live value instead of remembering handles (see note above the
@@ -614,19 +624,16 @@ static void maybe_set_nodelay(SOCKET s)
  * without needing host kernel netem. Re-applied idempotently per call like
  * maybe_set_nodelay (no getsockopt gate: stacks round socket buffer sizes,
  * so an equality check against the requested value is unreliable). */
+static LONG read_tiny_buffers_env(void)
+{
+    LONG target = env_int("HARNESS_TINY_BUFFERS");
+    return target < 0 ? 0 : target;
+}
+
 static void maybe_shrink_buffers(SOCKET s)
 {
-    /* Interlocked lazy init: same concurrent-first-call reasoning as
-     * maybe_set_nodelay above. */
-    static LONG tiny = -1; // -1 unknown, 0 off, >0 target bytes
-    LONG        resolved = InterlockedCompareExchange(&tiny, -1, -1);
-    if (resolved == -1)
-    {
-        resolved = env_int("HARNESS_TINY_BUFFERS");
-        if (resolved < 0)
-            resolved = 0;
-        InterlockedCompareExchange(&tiny, resolved, -1);
-    }
+    static volatile LONG tiny = -1; // -1 unknown, 0 off, >0 target bytes
+    LONG                 resolved = env_once(&tiny, read_tiny_buffers_env);
     if (resolved == 0)
         return;
 
@@ -645,23 +652,23 @@ static void maybe_shrink_buffers(SOCKET s)
                          (unsigned)s, val);
 }
 
+// Bytes dumped per traced payload; each renders as "XX " in the hex buffer.
+#define NET_TRACE_MAX_BYTES 48
+
 /* Harness-only payload tracing (HARNESS_NET_TRACE=1): hex-dump the first bytes
  * of server.dll traffic so protocol stalls can be diagnosed from hook_log. */
+static LONG read_trace_env(void)
+{
+    return env_flag("HARNESS_NET_TRACE") ? 1 : 0;
+}
+
 static void maybe_trace_payload(const char *dir, const char *buf, int len)
 {
-    /* Interlocked lazy init: same concurrent-first-call reasoning as
-     * maybe_set_nodelay above. */
-    static LONG trace_state = -1; // -1 unknown, 0 off, 1 on
-    LONG        resolved = InterlockedCompareExchange(&trace_state, -1, -1);
-    if (resolved == -1)
-    {
-        resolved = env_flag("HARNESS_NET_TRACE") ? 1 : 0;
-        InterlockedCompareExchange(&trace_state, resolved, -1);
-    }
-    if (resolved != 1 || !buf || len <= 0)
+    static volatile LONG trace_state = -1; // -1 unknown, 0 off, 1 on
+    if (env_once(&trace_state, read_trace_env) != 1 || !buf || len <= 0)
         return;
-    char hex[3 * 48 + 1];
-    int  n = len < 48 ? len : 48;
+    char hex[3 * NET_TRACE_MAX_BYTES + 1];
+    int  n = len < NET_TRACE_MAX_BYTES ? len : NET_TRACE_MAX_BYTES;
     for (int i = 0; i < n; i++)
         sprintf(hex + i * 3, "%02X ", (unsigned char)buf[i]);
     hex[n * 3] = '\0';
@@ -688,14 +695,6 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
         return real_recv(s, buf, len, flags);
     }
 
-    // Log suspicious parameters but don't block - let Windows handle them
-    // (Original HarryTheBird version passed all params through directly)
-    if (!buf || len <= 0)
-    {
-        log_msg("[WS2 HOOK] recv: Suspicious parameters: buf=%p, len=%d (hex=0x%08X)", buf, len,
-                (unsigned int)len);
-    }
-
     maybe_set_nodelay(s);
     maybe_shrink_buffers(s);
     int result = real_recv(s, buf, len, flags);
@@ -709,6 +708,14 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
     if (!g_fix_active)
     {
         return result;
+    }
+
+    // Log suspicious parameters but don't block - let Windows handle them
+    // (Original HarryTheBird version passed all params through directly)
+    if (!buf || len <= 0)
+    {
+        log_msg("[WS2 HOOK] recv: Suspicious parameters: buf=%p, len=%d (hex=0x%08X)", buf, len,
+                (unsigned int)len);
     }
 
     if (result == SOCKET_ERROR)
@@ -993,15 +1000,20 @@ static void __cdecl hook_evt_poll(void)
  * unaffected: the patch is on server.dll's own IAT). Disable with
  * NETWORKFIX_FASTSYNC=0.
  */
+// server.dll pump throttle to intercept, and the value it is clamped to.
+#define SERVER_PUMP_SLEEP_MS 30
+#define FASTSYNC_SLEEP_MS 1
+
 static VOID(WINAPI *real_server_sleep)(DWORD) = NULL;
 static IMAGE_THUNK_DATA *g_server_sleep_iat = NULL;
 
 static VOID WINAPI       hook_server_sleep(DWORD ms)
 {
-    if (ms == 30)
+    if (ms == SERVER_PUMP_SLEEP_MS)
     {
-        log_msg_rate_limited("fastsync", "[FASTSYNC] server.dll pump Sleep(30) clamped to 1 ms");
-        ms = 1; // keep yielding so the pump thread never busy-spins
+        log_msg_rate_limited("fastsync", "[FASTSYNC] server.dll pump Sleep(%d) clamped to %d ms",
+                             SERVER_PUMP_SLEEP_MS, FASTSYNC_SLEEP_MS);
+        ms = FASTSYNC_SLEEP_MS; // keep yielding so the pump thread never busy-spins
     }
     real_server_sleep(ms);
 }
@@ -1086,9 +1098,10 @@ HOOK_STATIC IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
              * every dereference, including the sentinel read below: the array
              * may end flush with the module, so testing the sentinel first
              * could read past the declared image size. */
-            if ((size_t)((const BYTE *)nameThunk - base) + sizeof(IMAGE_THUNK_DATA) >
-                    g_server_size ||
-                (size_t)((BYTE *)iatThunk - base) + sizeof(IMAGE_THUNK_DATA) > g_server_size)
+            if (!pe_range_in_module((int64_t)((const BYTE *)nameThunk - base),
+                                    sizeof(IMAGE_THUNK_DATA), g_server_size) ||
+                !pe_range_in_module((int64_t)((BYTE *)iatThunk - base), sizeof(IMAGE_THUNK_DATA),
+                                    g_server_size))
             {
                 break;
             }
@@ -1328,7 +1341,7 @@ BOOL init_hooks(void)
     if (status == MH_OK)
     {
         log_msg("[HOOK] All hooks enabled successfully");
-        g_HooksInitialized = true;
+        g_HooksInitialized = TRUE;
     }
     else
     {
@@ -1367,5 +1380,5 @@ void cleanup_hooks(void)
     // if another module still holds a reference.
     restore_server_sleep_iat();
     reset_server_globals();
-    g_HooksInitialized = false;
+    g_HooksInitialized = FALSE;
 }
