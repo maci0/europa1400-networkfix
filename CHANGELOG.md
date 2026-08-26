@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-26
+
 ### Fixed
 
 - `hooks.c`: the `hook_send` retry wait now pumps pending window messages
@@ -24,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/configuration.md`: `NETWORKFIX_DISABLE` row claimed it keeps
   "TCP_NODELAY injection setup" alive; the code skips NODELAY when the fix is
   disabled (as its own table row already said). Row now matches behavior.
+- `hooks.c`: keep `TCP_NODELAY` behind `g_fix_active`. Without it
+  `NETWORKFIX_DISABLE=1` still disabled Nagle, so the A/B baseline was a
+  half-patched build and every comparison against it was invalid. A test now
+  drives `maybe_set_nodelay` against a real socket and reads the option back
+  with `getsockopt`.
 
 ### Changed
 
@@ -57,6 +64,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NETWORKFIX_DISABLE` as pass-through (not "hooks off"), fastsync independent
   of the disable flag, ASI loading via dxwrapper under Wine, and harness
   geometry `1152x864` (`cur_res=2`).
+- `hooks.c`: `env_once()` replaces three hand-rolled copies of the interlocked
+  lazy-init used by the `TCP_NODELAY`, tiny-buffer and net-trace gates.
+- `pattern_matcher.c`: `_Static_assert` the pattern/mask lengths and the two
+  rel32 branch offsets, so reordering the pattern cannot silently desync the
+  indices; the prologue size gate widens to 64-bit before the addition, where
+  a near-4G `rva_offset` used to wrap `size_t` and pass.
+- Named constants replace the last magic numbers: `SHA256_HEX_SIZE` (was a
+  literal 65 in eleven places), `NET_TRACE_MAX_BYTES`, `SERVER_PUMP_SLEEP_MS`,
+  `FASTSYNC_SLEEP_MS`, `INIT_THREAD_JOIN_TIMEOUT_MS`, `PROLOGUE_MIN_BYTES`.
+- `make lint` now enforces a trailing newline (`InsertNewlineAtEOF`); nine
+  tracked files were missing one.
+- Docs: removed a README diagnostic step that told readers to uncomment debug
+  lines that do not exist, corrected the test count, collapsed two duplicate
+  documentation indexes, and replaced the "manual testing TODO" and its
+  contradicting "proven over VPN" feature claim with one section stating what
+  is verified and that performance impact is unmeasured.
+- `harness/artifacts/`: the reproduce instructions named a script and a
+  compose file that no longer exist and a WINEPREFIX under a personal home
+  directory; three screenshots filed as Network-screen stills actually show
+  the Tutorial screen and the Graphics Options dialog; the
+  `mp_harness_loss{0,10,25}.csv` files are the same 111-byte pass/fail
+  summary rather than per-loss measurements. All relabelled to match.
 
 ### Added
 
@@ -74,6 +103,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initialization before any hook is enabled. Dropping it removes a pointless
   trampoline hop on every `GetTickCount` call in the process; the two init log
   lines that mentioned it are gone with it.
+- `handoff.md`: agent handover note. Everything in it is covered by
+  `harness/README.md`, `harness/LUA_INTEGRATION.md` or the drivers.
+- `harness/artifacts/`: `mp_harness.exe` (a committed build output) and seven
+  byte-identical screenshot copies.
 
 ## [0.3.0] - 2026-08-10
 
@@ -144,7 +177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial ASI plugin with MinHook hooks for `recv`/`send`/`GetTickCount`/`srv_gameStreamReader`, pattern matcher,
   SHA256 version detection, and Wine integration tests (`make test`).
 
-[Unreleased]: https://github.com/maci0/europa1400-networkfix/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/maci0/europa1400-networkfix/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/maci0/europa1400-networkfix/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/maci0/europa1400-networkfix/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/maci0/europa1400-networkfix/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/maci0/europa1400-networkfix/releases/tag/v0.1.0
