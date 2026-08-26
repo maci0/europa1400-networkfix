@@ -10,6 +10,10 @@
 #include "logging.h"
 #include <windows.h>
 
+// Upper bound on waiting for the init thread during a real FreeLibrary unload;
+// cleanup proceeds regardless so a stuck init cannot wedge the unload.
+#define INIT_THREAD_JOIN_TIMEOUT_MS 10000
+
 // Global module handle for configuration access
 HMODULE       g_hModule = NULL;
 static HANDLE g_hInitThread = NULL;
@@ -96,7 +100,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
         {
             if (lpReserved == NULL)
             {
-                DWORD wait = WaitForSingleObject(g_hInitThread, 10000);
+                DWORD wait = WaitForSingleObject(g_hInitThread, INIT_THREAD_JOIN_TIMEOUT_MS);
                 if (wait != WAIT_OBJECT_0)
                 {
                     // The init thread may still be mid-initialization while we

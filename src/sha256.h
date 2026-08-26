@@ -5,11 +5,14 @@
 #include <winsock2.h>
 #include <windows.h>
 
+// Bytes needed for a SHA256 digest as a NUL-terminated lowercase hex string.
+#define SHA256_HEX_SIZE 65
+
 /**
  * Calculate SHA256 hash of a file using Windows CryptoAPI.
  *
  * @param filepath Path to file to hash (wide character string)
- * @param hash_output Buffer to store hex string result (must be at least 65 bytes)
+ * @param hash_output Buffer to store hex string result (SHA256_HEX_SIZE bytes)
  * @param output_size Size of hash_output buffer
  * @return TRUE if successful, FALSE otherwise
  */
