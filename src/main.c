@@ -36,8 +36,8 @@ static DWORD WINAPI init_thread(LPVOID lpParam)
     // Initialize hook system
     if (!init_hooks())
     {
-        log_msg("[HOOK] Hook initialization failed — game will run without network fix");
-        OutputDebugStringA("[HOOK] Hook initialization failed — running without fix.\n");
+        log_msg("[HOOK] Hook initialization failed; game will run without network fix");
+        OutputDebugStringA("[HOOK] Hook initialization failed; running without fix.\n");
         return 1;
     }
 

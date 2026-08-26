@@ -79,7 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `harness/entrypoint.sh`: add Xwayland `:92` accelerated path (`USE_XWAYLAND=1`, host socket `/tmp/.X11-unix/X92`, `radeonsi`), fix trap cleanup for host-X passthrough, keep `gilde-net` isolated; verified via `Xwayland :92 -geometry 1280x1024` (host `wayland-0`) vs `Xvfb` `llvmpipe` — `0x42980D` (`fcn.00429800` poll on `6b7e94` evt table) crashes ~10 s on plain Xvfb headless but survives 30 s on accelerated Xwayland (see `harness/README.md`, `harness/artifacts/VIDEO_INDEX.md`).
+- `harness/entrypoint.sh`: add Xwayland `:92` accelerated path (`USE_XWAYLAND=1`, host socket `/tmp/.X11-unix/X92`, `radeonsi`), fix trap cleanup for host-X passthrough, keep `gilde-net` isolated; verified via `Xwayland :92 -geometry 1280x1024` (host `wayland-0`) vs `Xvfb` `llvmpipe`: `0x42980D` (`fcn.00429800` poll on `6b7e94` evt table) crashes ~10 s on plain Xvfb headless but survives 30 s on accelerated Xwayland (see `harness/README.md`, `harness/artifacts/VIDEO_INDEX.md`).
 - `harness/drivers/host.sh`: restore `Network` keyboard navigation (`Down×3→Return` from main menu) with `LOG_DIR` fix (`${LOG_DIR:-/tmp}`), 8 s warm-up for evt table, stay-on-Network (no `Escape` back to avoid `evt:console` teardown fault); `client.sh` split to `Xvfb :99` to avoid X contention.
 
 ### Added

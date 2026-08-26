@@ -2,42 +2,41 @@
 
 A network stability patch for *Europa 1400: The Guild* that fixes multiplayer desynchronization issues over VPNs and modern internet connections. Implemented as a non-invasive `.asi` plugin using runtime API hooking.
 
+![Europa 1400 Gold main menu rendered on a headless X root](docs/img/harness-main-menu.png)
+
+The game running with no host X server and no GPU. `harness/` boots this in
+Docker under Wine, loads the plugin, drives two peers into one lobby and
+injects packet loss between them.
+
 ## Features
 
 - **Improved network stability:** Fixes desynchronization and disconnection issues caused by packet loss, making the game playable over VPNs (Hamachi, Radmin) and modern internet connections
 - **Resilient network communication:** Adds retry logic and proper error handling to the game's network code, allowing it to recover from temporary network interruptions
-- **Non-invasive:** Works as a plugin without modifying any game files - simply drop into game directory
-- **Proven stability:** Tested with 15+ in-game years of stable multiplayer sessions over VPN connections
+- **Non-invasive:** Works as a plugin without modifying any game files; drop it into the game directory
+- **Proven stability:** 15 in-game years of multiplayer over a Radmin VPN link without a desync (manual testing, see [what is and is not verified](#what-is-and-is-not-verified))
 
 ## Why?
 
 The game's original multiplayer mode depends on `server.dll` for all network
-communication.  That implementation assumes perfect packet delivery and will
-desynchronize or disconnect clients on even minor packet loss.  Playing over
+communication. That implementation assumes perfect packet delivery and will
+desynchronize or disconnect clients on even minor packet loss. Playing over
 VPNs such as Hamachi or Radmin is therefore nearly impossible because the game
 quickly throws "out of sync" errors.
 
 This project draws on research from [The-Guild-1-HookDLLs](https://github.com/HarryTheBird/The-Guild-1-HookDLLs)
 and provides a lightweight fix aimed at making the network stack resilient to
-real‑world connections.
+real-world connections.
 
 ## How It Works
 
-On a real Windows install the Gold Edition ASI loader picks up `networkfix.asi` from the game directory. Under Wine (including `harness/`) that loader never fires — the ASI is loaded by dxwrapper (`[Plugins] LoadPlugins=1` + `WINEDLLOVERRIDES=…;d3d8=n,b`). The plugin uses [MinHook](https://github.com/TsudaKageyu/minhook) to intercept key functions at runtime:
+On a real Windows install the Gold Edition ASI loader picks up `networkfix.asi` from the game directory. Under Wine (including `harness/`) that loader never fires: the ASI is loaded by dxwrapper (`[Plugins] LoadPlugins=1` + `WINEDLLOVERRIDES=…;d3d8=n,b`). The plugin uses [MinHook](https://github.com/TsudaKageyu/minhook) to intercept key functions at runtime:
 
-1. **Windows Socket API hooks** (`recv`/`send`) — converts `WSAEWOULDBLOCK` into a 0-byte `recv` and retries a partial `send` instead of treating either as fatal
-2. **`TCP_NODELAY`** — disables Nagle on `server.dll` sockets (latency-sensitive small messages; off with `NETWORKFIX_NODELAY=0`)
-3. **Game-specific hook** (`srv_gameStreamReader`) — resets the persistent `ctx[0xE]` error flag that causes "Out of Sync"
-4. **Fast sync** — clamps `server.dll`'s pump `Sleep(30)` to 1 ms via its KERNEL32 IAT (off with `NETWORKFIX_FASTSYNC=0`)
+1. **Windows Socket API hooks** (`recv`/`send`): converts `WSAEWOULDBLOCK` into a 0-byte `recv` and retries a partial `send` instead of treating either as fatal
+2. **`TCP_NODELAY`**: disables Nagle on `server.dll` sockets (latency-sensitive small messages; off with `NETWORKFIX_NODELAY=0`)
+3. **Game-specific hook** (`srv_gameStreamReader`): resets the persistent `ctx[0xE]` error flag that causes "Out of Sync"
+4. **Fast sync**: clamps `server.dll`'s pump `Sleep(30)` to 1 ms via its KERNEL32 IAT (off with `NETWORKFIX_FASTSYNC=0`)
 
 By applying surgical fixes only to problematic functions, the plugin adds proper error handling and retry logic without changing game behavior.
-
-**See also:**
-- [docs/problem-analysis.md](docs/problem-analysis.md) - Detailed technical problem analysis
-- [docs/architecture.md](docs/architecture.md) - Complete architecture documentation
-- [docs/development-guide.md](docs/development-guide.md) - Building and contributing guide
-- [docs/configuration.md](docs/configuration.md) - Configuration options
-- [docs/server-dll-versions.md](docs/server-dll-versions.md) - Supported game versions
 
 ### Technical Stack
 
@@ -132,7 +131,7 @@ The compiled plugins will be in:
   - Verify your `game.ini` has correct server path in `[Network]` section
   - Try the debug version: `make debug` and use `networkfix-debug.asi`
 
-#### Hook Creation Failures  
+#### Hook Creation Failures
 - **Symptoms:** Log shows "Failed to create hook" messages
 - **Solutions:**
   - Ensure no antivirus is blocking the plugin
@@ -147,14 +146,14 @@ The compiled plugins will be in:
   - Ensure game directory isn't read-only
 
 #### Loading Screen Hangs for Minutes, Then Recovers
-- **Symptoms:** Starting/loading a multiplayer game (even localhost/LAN) freezes the loading screen for 1–3 minutes before suddenly finishing. No OOS error.
+- **Symptoms:** Starting/loading a multiplayer game (even localhost/LAN) freezes the loading screen for 1 to 3 minutes before suddenly finishing. No OOS error.
 - **Status:** Fixed. Verified 2026-08-09 with the `harness/` Xvfb + xdotool harness: `src/hooks.c:hook_send` retried `WSAEWOULDBLOCK` with `Sleep(1)` on the UI thread (up to `5000` retries ≙ ~5 s per `send` call, many calls during save/map sync). While in that loop, no `PeekMessage/DispatchMessage` was pumped, so the progress dialog appeared hung; localhost fills the loopback window just as fast as VPN.
 - **Fix:** The retry wait now pumps pending window messages (`pump_pending_messages` in `src/hooks.c`), keeping the progress dialog responsive while the send drains. The transfer itself is additionally accelerated by fast sync (`NETWORKFIX_FASTSYNC`, on by default).
 
 ### Log Analysis
 
 The `hook_log.txt` file contains detailed information:
-- `[HOOK]` messages show initialization and hook creation status  
+- `[HOOK]` messages show initialization and hook creation status
 - `[WS2 HOOK]` messages indicate network function interception
 - `[SERVER HOOK]` messages show server.dll function patches
 - `[CONFIG]` messages relate to game.ini parsing
@@ -162,16 +161,21 @@ The `hook_log.txt` file contains detailed information:
 ### Advanced Diagnostics
 
 For deeper investigation:
-1. Use debug build: `make debug` 
-2. Enable additional logging by uncommenting debug lines in source
-3. Use Process Monitor to watch file/registry access
-4. Check with Dependency Walker if server.dll loads correctly
+1. Use the debug build: `make debug`, then `networkfix-debug.asi`
+2. `NETWORKFIX_DISABLE=1` runs with the hooks installed but passing through,
+   which tells you whether a symptom is the fix or the game
+3. `HARNESS_NET_TRACE=1` hex-dumps the first 48 bytes of each `server.dll`
+   payload into `hook_log.txt`
+4. Use Process Monitor to watch file/registry access
+5. Check with Dependency Walker if server.dll loads correctly
+
+All toggles are documented in [docs/configuration.md](docs/configuration.md).
 
 ### Getting Help
 
 If issues persist, please create an issue on the [GitHub repository](https://github.com/maci0/europa1400-networkfix/issues) with:
 - Your `hook_log.txt` file contents
-- Game version and installation path  
+- Game version and installation path
 - Network configuration (VPN type, etc.)
 - Steps to reproduce the problem
 
@@ -179,7 +183,7 @@ If issues persist, please create an issue on the [GitHub repository](https://git
 
 ### Automated tests
 
-Run the full suite (40+ tests) under Wine:
+Run the full suite (70 tests) under Wine:
 
 ```bash
 make test
@@ -194,19 +198,23 @@ Steam) to also enable end-to-end integration tests: hash → version detection
 file and skips cleanly when none are present. See
 [Automated Testing](docs/development-guide.md#automated-testing) for details.
 
-### Manual testing TODO
+### What is and is not verified
 
-- **VPN Testing**: Test multiplayer sessions over VPNs (Hamachi, Radmin) to verify packet loss resilience
-- **Connection Recovery**: Test network interruption recovery and retry logic functionality
-- **Performance Impact**: Measure any performance impact from the network hooks during gameplay
+- **VPN play**: 15 in-game years over Radmin VPN (mobile hotspot plus WiFi),
+  manual, single tester. See
+  [docs/problem-analysis.md](docs/problem-analysis.md).
+- **Packet loss**: reproduced in `harness/` with `tc netem` at 0%, 10% and
+  25% loss, patched against an `NETWORKFIX_DISABLE=1` baseline.
+- **Performance impact**: not measured. The hooks sit on every `recv`/`send`
+  from `server.dll` and no one has profiled that cost.
 
-## Harness (game test — xdotool + Lua)
+## Harness (game test: xdotool + Lua)
 
-`harness/` runs `Europa1400Gold_TL.exe` fully headless: in-container `weston --backend=headless` + rootful `Xwayland :99 -geometry 1152x864` (`cur_res=2`; llvmpipe default, GPU via `harness/docker-compose.gpu.yml`), fresh `WINEARCH=win32` prefix (`setup_the_guild_gold_2.0.0.5.exe /VERYSILENT`), `gilde-net 10.10.0.0/24` isolated, ASI loaded via dxwrapper `LoadPlugins=1` (`d3d8=n,b`), A/B baseline via `NETWORKFIX_DISABLE=1` (hooks stay installed, fix behaviour off), `ffmpeg` + `import` screenshots, `tc netem` (`GC_LOSS` or `harness/netem.sh --scenario packet-loss`), and lua-driven lobby/gameplay (`docker-compose.lua.yml`) via `harness/LUA_INTEGRATION.md`. See `harness/README.md` + `docs/configuration.md` + `handoff.md`.
+`harness/` runs `Europa1400Gold_TL.exe` fully headless: in-container `weston --backend=headless` + rootful `Xwayland :99 -geometry 1152x864` (`cur_res=2`; llvmpipe default, GPU via `harness/docker-compose.gpu.yml`), fresh `WINEARCH=win32` prefix (`setup_the_guild_gold_2.0.0.5.exe /VERYSILENT`), `gilde-net 10.10.0.0/24` isolated, ASI loaded via dxwrapper `LoadPlugins=1` (`d3d8=n,b`), A/B baseline via `NETWORKFIX_DISABLE=1` (hooks stay installed, fix behaviour off), `ffmpeg` + `import` screenshots, `tc netem` (`GC_LOSS` or `harness/netem.sh --scenario packet-loss`), and lua-driven lobby/gameplay (`docker-compose.lua.yml`) via `harness/LUA_INTEGRATION.md`. See `harness/README.md` and `docs/configuration.md`.
 
 ## Documentation
 
-Comprehensive documentation is available in the [docs/](docs/) directory:
+The [docs/](docs/) directory holds the rest:
 
 ### For Users
 - **[README.md](README.md)** (this file) - Installation and basic usage
@@ -227,7 +235,7 @@ Comprehensive documentation is available in the [docs/](docs/) directory:
 
 ## Contributing
 
-Contributions are welcome! Please see the [Development Guide](docs/development-guide.md) for detailed instructions on building, testing, and submitting pull requests.
+Contributions are welcome. See the [Development Guide](docs/development-guide.md) for instructions on building, testing, and submitting pull requests.
 
 **Quick start:**
 1. Fork the repository

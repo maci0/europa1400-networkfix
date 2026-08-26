@@ -197,7 +197,7 @@ void log_socket_buffer_info(SOCKET s)
 
     if (!g_logctx.critical_section_initialized)
     {
-        // Logging not ready — skip dedup, just log directly (log_msg will no-op)
+        // Logging not ready: skip dedup, log directly (log_msg will no-op)
         should_log = TRUE;
     }
     else
@@ -214,7 +214,7 @@ void log_socket_buffer_info(SOCKET s)
     if (!should_log)
         return;
 
-    // Get socket buffer sizes (outside lock — slow syscall)
+    // Get socket buffer sizes (outside lock, slow syscall)
     int  recv_buf_size = -1;
     int  send_buf_size = -1;
     int  opt_len = sizeof(int);

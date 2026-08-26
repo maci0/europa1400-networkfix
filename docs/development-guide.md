@@ -20,9 +20,9 @@ This guide covers everything needed to build, modify, debug, and contribute to t
 ### Windows Development
 
 **Required Tools:**
-- [Zig](https://ziglang.org/download/) 0.16.0 (pinned — `make check-zig` verifies, CI caches `~/.zig`)
+- [Zig](https://ziglang.org/download/) 0.16.0 (pinned: `make check-zig` verifies, CI caches `~/.zig`)
 - [Make for Windows](http://gnuwin32.sourceforge.net/packages/make.htm) or use Git Bash
-- [clang-format](https://releases.llvm.org/download.html) (optional — `make format` / `make lint`)
+- [clang-format](https://releases.llvm.org/download.html) (optional: `make format` / `make lint`)
 
 **Recommended IDEs:**
 - Visual Studio Code with C/C++ extension
@@ -927,7 +927,7 @@ To package locally instead: `make dist` (requires `zip`); outputs land in `dist/
 
 ## Harness Prefix: Win32 not WoW64
 
-Europa1400Gold_TL.exe is PE32 — the game runs under **WINEARCH=win32**, not the `wow64` experimental mode. `harness/Dockerfile` bakes a fresh prefix with `ENV WINEARCH=win32` + `xvfb-run wine wineboot --init` + `wine /tmp/setup.exe /VERYSILENT /DIR=C:\Guild` + `cp /tmp/setup.exe /harness/`, and `harness/docker-compose.yml` carries `WINEARCH=win32`. To rebuild a fresh prefix:
+Europa1400Gold_TL.exe is PE32, so the game runs under **WINEARCH=win32**, not the `wow64` experimental mode. `harness/Dockerfile` bakes a fresh prefix with `ENV WINEARCH=win32` + `xvfb-run wine wineboot --init` + `wine /tmp/setup.exe /VERYSILENT /DIR=C:\Guild` + `cp /tmp/setup.exe /harness/`, and `harness/docker-compose.yml` carries `WINEARCH=win32`. To rebuild a fresh prefix:
 
 ```bash
 docker compose -f harness/docker-compose.yml build   # 42s winecfg + setup, 6.62 GB image #arch=win32

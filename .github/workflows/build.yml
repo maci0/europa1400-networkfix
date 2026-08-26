@@ -115,7 +115,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload to GitHub Release (latest — rolling on main)
+      - name: Upload to GitHub Release (latest, rolling on main)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.3.2
         with:

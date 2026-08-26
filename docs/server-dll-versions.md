@@ -200,5 +200,5 @@ return 0; // unknown -> abort
 
 ---
 
-**Last Updated**: 2026-08-14 — rizin-validated (`GOG 0x3960`, `Steam 0x3720`, `pattern 51 8B 4C 24 0C … 8B 45 38` + `JE/JNE` bounds)
+**Last Updated**: 2026-08-14, rizin-validated (`GOG 0x3960`, `Steam 0x3720`, `pattern 51 8B 4C 24 0C … 8B 45 38` + `JE/JNE` bounds)
 **Status**: Production-ready for GOG + German Steam; unknown versions handled via pattern search.

@@ -453,7 +453,7 @@ static void test_nodelay_skipped_when_fix_inactive(void)
     closesocket(s);
 }
 
-/* send: non-server caller bypasses retry — raw WSAEWOULDBLOCK propagates */
+/* send: non-server caller bypasses retry, raw WSAEWOULDBLOCK propagates */
 static void test_send_non_server_passthrough(void)
 {
     g_test_force_caller_server = FALSE;
@@ -803,7 +803,7 @@ static BOOL make_temp_path(wchar_t *out, size_t out_chars)
     wchar_t tmpFile[MAX_PATH];
     if (GetTempFileNameW(tmpDir, L"nfx", 0, tmpFile) == 0)
         return FALSE;
-    // GetTempFileName creates the file — we want caller to control; delete it and return path
+    // GetTempFileName creates the file; the caller controls it, so delete it and return the path
     DeleteFileW(tmpFile);
     if (wcslen(tmpFile) >= out_chars)
         return FALSE;

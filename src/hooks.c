@@ -322,7 +322,7 @@ static BOOL load_server_dll(const char *serverPath)
             log_msg("[HOOK] Failed to load server.dll (error: %lu)", error);
             return FALSE;
         }
-        // No Sleep(100) — LoadLibrary is synchronous; original race comment not reproducible.
+        // No Sleep(100): LoadLibrary is synchronous; original race comment not reproducible.
         log_msg("[HOOK] Server.dll loaded at %p", (void *)g_hServerDll);
         return TRUE;
     }
@@ -463,7 +463,7 @@ PATH_STATIC BOOL init_server_module(void)
     // Verify pre-hash matches post-load hash if we had one (detect TOCTOU replacement)
     if (server_hash_mismatch(preHash, postHash))
     {
-        log_msg("[HOOK] Hash mismatch pre/post load: %s != %s — possible replacement, aborting",
+        log_msg("[HOOK] Hash mismatch pre/post load: %s != %s, possible replacement, aborting",
                 preHash, postHash);
         reset_server_globals();
         return FALSE;
@@ -1190,7 +1190,7 @@ static void restore_server_sleep_iat(void)
         // Without write access the IAT keeps pointing at hook_server_sleep; if
         // server.dll stays mapped via another reference while this DLL unloads,
         // its pump thread would jump into freed code. Never skip silently.
-        log_msg("[FASTSYNC] VirtualProtect failed before IAT restore: %lu — hook left installed",
+        log_msg("[FASTSYNC] VirtualProtect failed before IAT restore: %lu, hook left installed",
                 GetLastError());
     }
 }

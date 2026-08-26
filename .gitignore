@@ -13,4 +13,9 @@ harness/artifacts/*.mp4
 !harness/artifacts/crash_dialog_dxwrapper.png
 !harness/artifacts/proof_netem_*.mp4
 !harness/artifacts/proof_xterm.png
-!harness/artifacts/mp_harness.exe
+
+# Agent scratch / handoff notes never belong in the repo.
+handoff.md
+HANDOFF.md
+HANDOVER.md
+.scratch/

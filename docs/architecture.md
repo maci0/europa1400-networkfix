@@ -52,7 +52,7 @@ The europa1400-networkfix is a runtime API hook plugin that intercepts Windows n
 
 ### ASI Plugin Loader
 
-On a native Windows Gold Edition install the game's ASI loader picks up `.asi` files from the game directory at startup. Under Wine (and in `harness/`) that loader never fires — Miles only scans ASI providers when audio init succeeds, which it does not headless. The harness therefore loads `networkfix.asi` via dxwrapper (`[Plugins] LoadPlugins=1` + `WINEDLLOVERRIDES=…;d3d8=n,b`).
+On a native Windows Gold Edition install the game's ASI loader picks up `.asi` files from the game directory at startup. Under Wine (and in `harness/`) that loader never fires: Miles only scans ASI providers when audio init succeeds, which it does not headless. The harness therefore loads `networkfix.asi` via dxwrapper (`[Plugins] LoadPlugins=1` + `WINEDLLOVERRIDES=…;d3d8=n,b`).
 
 ### Load Sequence
 
@@ -205,9 +205,9 @@ Game Code → recv() → [MinHook Trampoline] → hook_recv()
 - Instruction pattern matching for function signatures
 
 **Key Functions:**
-- `find_srv_gameStreamReader_by_pattern()` — scan `server.dll` for the common prologue
-- `find_first_valid_match()` — scan every pattern occurrence, accept the first that validates (a false-positive hit can no longer mask a valid match later in the image)
-- `find_pattern_in_memory()` / `validate_function_prologue()` — mask search + JE/JNE bounds check (test-only exports)
+- `find_srv_gameStreamReader_by_pattern()`: scan `server.dll` for the common prologue
+- `find_first_valid_match()`: scan every pattern occurrence, accept the first that validates (a false-positive hit can no longer mask a valid match later in the image)
+- `find_pattern_in_memory()` / `validate_function_prologue()`: mask search plus JE/JNE bounds check (test-only exports)
 
 ### 5. Version Detection ([src/versions.c](../src/versions.c), [src/sha256.c](../src/sha256.c))
 

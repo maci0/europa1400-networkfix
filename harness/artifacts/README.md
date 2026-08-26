@@ -9,13 +9,16 @@ stay on the machine that produced them; only `proof_netem_0_10_25.mp4` and
   netem packet loss.
 - `host_client_pair/host.mp4`, `host_client_pair/client.mp4`: both peers of
   one lobby, recorded side by side.
-- `mp_harness_loss{0,10,25}.csv`: per-run counters. All three files are
-  byte-identical, so they record no difference between the loss levels.
+- `mp_harness_loss{0,10,25}.csv`: despite the names these hold no per-loss
+  measurement. Each is the same 111-byte pass/fail summary of the pattern,
+  desync-invariant and send-retry checks, byte-identical across all three
+  files. Treat them as a run marker, not as loss data.
 - `screenshot_*.png`: `import -window root` stills. Despite the names, the
   committed ones show the Tutorial screen (`screenshot_network_final.png`,
   `gameplay_network.png`), the Graphics Options dialog
   (`screenshot_network_stay_host.png`) and the main menu
-  (`screenshot_main_menu.png`). None of them shows the Network screen.
+  (`screenshot_menu_final.png`, cropped into `docs/img/` for the README).
+  None of them shows the Network screen.
 - `crash_dialog_dxwrapper.png`, `screenshot_host_xwayland_network.png`: the
   Wine "Program Error" dialog from the crashes described in
   `README_proof.md`.

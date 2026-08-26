@@ -358,7 +358,7 @@ To add support for a new game version:
 
 3. **Add to [src/versions.c](../src/versions.c):**
    ```c
-   // In src/versions.c known_versions[] — field order is
+   // In src/versions.c known_versions[], field order is
    // {sha256_hash, target_rva, version_name} (see server_version_info_t):
    {"abcdef1234567890...", 0x4000, "My Version"},
    ```
@@ -435,7 +435,7 @@ If your server.dll is in a non-standard location:
 ServerPath=Mods\NetworkFix\server.dll
 ```
 
-**Restart game** — no rebuild needed. Absolute `ServerPath` values are rejected
+**Restart game**, no rebuild needed. Absolute `ServerPath` values are rejected
 and init falls back to `Server\server.dll` (or aborts if that file is missing).
 
 ### Example 4: Minimal Logging
