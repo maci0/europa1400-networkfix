@@ -140,8 +140,6 @@ void log_msg(const char *fmt, ...)
                     OutputDebugStringA(ods);
             }
         }
-        // Removed FlushFileBuffers for better performance
-        // FlushFileBuffers(g_logctx.log_file);
     }
     LeaveCriticalSection(&g_logctx.critical_section);
 }

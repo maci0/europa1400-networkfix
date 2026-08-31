@@ -1,8 +1,7 @@
 /*
- * main.c: DLL entry point and initialization thread for Europa 1400 network fix.
- *
- * This file contains the DllMain entry point and manages the initialization
- * of logging and hook systems in a separate thread to avoid DllMain deadlocks.
+ * main.c: DLL entry point for the Europa 1400 network fix. Hook setup runs on
+ * its own thread because doing that work inside DllMain risks a loader-lock
+ * deadlock.
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -18,22 +17,11 @@
 HMODULE       g_hModule = NULL;
 static HANDLE g_hInitThread = NULL;
 
-/**
- * Initialization thread procedure that sets up logging and hooks.
- * Runs in a separate thread to avoid potential DllMain deadlock issues.
- *
- * This thread:
- * 1. Initializes the hook system
- * 2. Reports initialization status
- * 3. Exits cleanly
- *
- * @param lpParam Unused thread parameter
- * @return 0 on success, 1 on failure
- */
+/* Hook setup, off the loader lock (see file header). Failure is non-fatal: the
+ * game runs on unpatched. Nothing reads the exit code. */
 static DWORD WINAPI init_thread(LPVOID lpParam)
 {
     (void)lpParam;
-    // Initialize hook system
     if (!init_hooks())
     {
         log_msg("[HOOK] Hook initialization failed; game will run without network fix");
@@ -44,24 +32,6 @@ static DWORD WINAPI init_thread(LPVOID lpParam)
     return 0;
 }
 
-/**
- * DLL entry point called by Windows loader.
- * Handles process attach/detach and thread events.
- *
- * For process attach:
- * - Stores module handle for configuration access
- * - Disables thread library calls for performance
- * - Initializes logging system
- * - Creates initialization thread to setup hooks
- *
- * For process detach:
- * - Cleans up hooks and logging
- *
- * @param hModule Handle to DLL module
- * @param dwReason Reason for call (DLL_PROCESS_ATTACH, etc.)
- * @param lpReserved Reserved parameter
- * @return TRUE on success, FALSE on failure
- */
 // cppcheck-suppress unusedFunction
 // False positive: DllMain is the PE entry point; only the loader calls it.
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
@@ -71,17 +41,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
     case DLL_PROCESS_ATTACH:
         g_hModule = hModule;
 
-        // Disable thread library calls for performance using DisableThreadLibraryCalls()
         DisableThreadLibraryCalls(hModule);
 
-        // Initialize logging system first
         if (!init_logging(hModule))
         {
             OutputDebugStringA("[HOOK] Failed to initialize logging. Aborting attach.\n");
             return FALSE;
         }
 
-        // Create initialization thread to avoid DllMain deadlock issues
         g_hInitThread = CreateThread(NULL, 0, init_thread, NULL, 0, NULL);
         if (!g_hInitThread)
         {

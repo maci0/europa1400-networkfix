@@ -525,17 +525,14 @@ int __cdecl hook_srv_gameStreamReader(int *ctx, int received, int totalLen)
         return real_srv_gameStreamReader(ctx, received, totalLen);
     }
 
-    // Validate parameters
     if (!ctx)
     {
         log_msg("[SERVER HOOK] srv_gameStreamReader called with NULL context");
         return -1;
     }
 
-    // Call original function
-    int ret = real_srv_gameStreamReader(ctx, received, totalLen);
+    int  ret = real_srv_gameStreamReader(ctx, received, totalLen);
 
-    // Apply fixes to prevent network instability
     BOOL modified = FALSE;
     if (ctx[SRV_CTX_ERROR_INDEX] < 0)
     {
@@ -863,9 +860,7 @@ static DWORD strip_surrounding_quotes(char *value, DWORD len)
 /**
  * Reads server path configuration from game.ini file.
  * Looks for "ServerPath" (documented) or "Server" (legacy) key in "[Network]".
- *
- * Uses GetPrivateProfileStringA() Windows API to parse INI file format.
- * Handles quoted paths and provides logging for troubleshooting.
+ * Surrounding quotes are stripped from the value.
  *
  * @param hModule Module handle to determine DLL location
  * @return Pointer to static buffer containing server path, or NULL on failure
@@ -888,7 +883,6 @@ const char *get_server_path_from_ini(HMODULE hModule)
         return NULL;
     }
 
-    // Use GetPrivateProfileStringA() to read from INI file
     // Support both ServerPath (documented) and Server (legacy) keys for backwards compat.
     // An empty value (e.g. ServerPath="") counts as absent so callers fall back
     // to the documented default location.
@@ -916,7 +910,6 @@ const char *get_server_path_from_ini(HMODULE hModule)
 
 /**
  * Helper function to create API hooks with consistent logging.
- * Reduces code duplication in hook creation.
  *
  * @param module Module name (L"ws2_32", etc.)
  * @param function Function name to hook (also used as the log name)
@@ -1284,7 +1277,6 @@ BOOL init_hooks(void)
         log_msg("[HOOK] Failed to initialize server module, continuing without network hooks");
     }
 
-    // Initialize MinHook library using MH_Initialize()
     MH_STATUS status = MH_Initialize();
     if (status != MH_OK)
     {
@@ -1324,7 +1316,6 @@ BOOL init_hooks(void)
         return FALSE;
     }
 
-    // Enable all hooks using MH_EnableHook()
     status = MH_EnableHook(MH_ALL_HOOKS);
     if (status == MH_OK)
     {
@@ -1345,10 +1336,7 @@ BOOL init_hooks(void)
     return TRUE;
 }
 
-/**
- * Cleans up and disables all hooks when DLL is unloading.
- * Uses MH_DisableHook() and MH_Uninitialize() for cleanup.
- */
+/* Disables and releases every hook; called on DLL unload. */
 void cleanup_hooks(void)
 {
     if (!g_HooksInitialized)

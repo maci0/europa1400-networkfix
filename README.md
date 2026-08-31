@@ -36,8 +36,6 @@ On a real Windows install the Gold Edition ASI loader picks up `networkfix.asi` 
 3. **Game-specific hook** (`srv_gameStreamReader`): resets the persistent `ctx[0xE]` error flag that causes "Out of Sync"
 4. **Fast sync**: clamps `server.dll`'s pump `Sleep(30)` to 1 ms via its KERNEL32 IAT (off with `NETWORKFIX_FASTSYNC=0`)
 
-By applying surgical fixes only to problematic functions, the plugin adds proper error handling and retry logic without changing game behavior.
-
 ### Technical Stack
 
 - **Language:** C (compiled with [Zig](https://ziglang.org/) for cross-compilation)
