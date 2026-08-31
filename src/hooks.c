@@ -229,22 +229,6 @@ PATH_STATIC void reset_server_globals(void)
 }
 
 /**
- * Gets the number of bytes available to read from socket.
- *
- * @return Available bytes according to FIONREAD, or -1 if the probe fails
- *         (callers treat -1 as "unknown", not as "empty")
- */
-static int get_available_bytes(SOCKET s)
-{
-    u_long available = 0;
-    if (ioctlsocket(s, FIONREAD, &available) == SOCKET_ERROR)
-    {
-        return -1;
-    }
-    return (int)available;
-}
-
-/**
  * Gates a game.ini ServerPath value before it is ever handed to LoadLibrary:
  * relative, no "..", must end in ".dll". Containment inside the game
  * directory is checked separately in load_server_dll().
@@ -730,16 +714,12 @@ int WSAAPI hook_recv(SOCKET s, char *buf, int len, int flags)
             // both outcomes report under the same key and cadence.
             if (log_msg_rate_gate("recv_wouldblock"))
             {
-                int available = get_available_bytes(s);
-                if (available >= 0)
-                {
-                    log_msg("[WS2 HOOK] recv: WSAEWOULDBLOCK, %d bytes available in buffer",
+                u_long available = 0;
+                if (ioctlsocket(s, FIONREAD, &available) == 0)
+                    log_msg("[WS2 HOOK] recv: WSAEWOULDBLOCK, %lu bytes available in buffer",
                             available);
-                }
                 else
-                {
                     log_msg("[WS2 HOOK] recv: WSAEWOULDBLOCK, buffer state unknown");
-                }
             }
 
             // Convert WSAEWOULDBLOCK to 0 for server.dll calls
@@ -1124,6 +1104,30 @@ HOOK_STATIC IMAGE_THUNK_DATA *find_kernel32_sleep_thunk(void)
     return NULL;
 }
 
+/* Writes `value` into an IAT slot through a temporary PAGE_READWRITE mapping,
+ * reporting the slot's previous contents in `*previous` when that is non-NULL.
+ * FALSE means the page could not be made writable and nothing was written;
+ * GetLastError() still holds that failure. A failure to put the original
+ * protection back is logged (the page then stays writable for the process
+ * lifetime) but does not undo the write. */
+static BOOL swap_iat_slot(IMAGE_THUNK_DATA *thunk, uintptr_t value, uintptr_t *previous)
+{
+    DWORD oldProtect;
+    if (!VirtualProtect(&thunk->u1.Function, sizeof(thunk->u1.Function), PAGE_READWRITE,
+                        &oldProtect))
+    {
+        return FALSE;
+    }
+    if (previous)
+        *previous = (uintptr_t)thunk->u1.Function;
+    thunk->u1.Function = value;
+    if (!VirtualProtect(&thunk->u1.Function, sizeof(thunk->u1.Function), oldProtect, &oldProtect))
+    {
+        log_msg("[FASTSYNC] Failed to restore IAT page protection: %lu", GetLastError());
+    }
+    return TRUE;
+}
+
 static void patch_server_sleep_iat(void)
 {
     if (env_opt_out("NETWORKFIX_FASTSYNC"))
@@ -1142,21 +1146,14 @@ static void patch_server_sleep_iat(void)
         return;
     }
 
-    DWORD oldProtect;
-    if (!VirtualProtect(&thunk->u1.Function, sizeof(thunk->u1.Function), PAGE_READWRITE,
-                        &oldProtect))
+    uintptr_t original;
+    if (!swap_iat_slot(thunk, (uintptr_t)hook_server_sleep, &original))
     {
         log_msg("[FASTSYNC] VirtualProtect failed: %lu", GetLastError());
         return;
     }
-    real_server_sleep = (VOID(WINAPI *)(DWORD))(uintptr_t)thunk->u1.Function;
-    thunk->u1.Function = (uintptr_t)hook_server_sleep;
+    real_server_sleep = (VOID(WINAPI *)(DWORD))original;
     g_server_sleep_iat = thunk;
-    if (!VirtualProtect(&thunk->u1.Function, sizeof(thunk->u1.Function), oldProtect, &oldProtect))
-    {
-        // Page stays writable for the process lifetime; surface it.
-        log_msg("[FASTSYNC] Failed to restore IAT page protection: %lu", GetLastError());
-    }
     log_msg("[FASTSYNC] Patched server.dll Sleep IAT slot %p (orig %p)",
             (void *)&thunk->u1.Function, (void *)real_server_sleep);
 }
@@ -1172,17 +1169,8 @@ static void restore_server_sleep_iat(void)
      * these globals again, so they must stay valid: kernel32!Sleep lives for
      * the process lifetime, hence the pointers are kept (never NULLed) and
      * this function stays idempotent if cleanup runs twice. */
-    DWORD oldProtect;
-    if (VirtualProtect(&g_server_sleep_iat->u1.Function, sizeof(g_server_sleep_iat->u1.Function),
-                       PAGE_READWRITE, &oldProtect))
+    if (swap_iat_slot(g_server_sleep_iat, (uintptr_t)real_server_sleep, NULL))
     {
-        g_server_sleep_iat->u1.Function = (uintptr_t)real_server_sleep;
-        if (!VirtualProtect(&g_server_sleep_iat->u1.Function,
-                            sizeof(g_server_sleep_iat->u1.Function), oldProtect, &oldProtect))
-        {
-            // Page stays writable for the process lifetime; surface it.
-            log_msg("[FASTSYNC] Failed to restore IAT page protection: %lu", GetLastError());
-        }
         log_msg("[FASTSYNC] Restored server.dll Sleep IAT");
     }
     else

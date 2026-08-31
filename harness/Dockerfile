@@ -12,7 +12,7 @@ RUN dpkg --add-architecture i386 && \
     wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        winehq-staging winetricks xvfb xauth xdotool wmctrl x11-utils imagemagick scrot iproute2 iputils-ping net-tools tini bash python3 python3-pip strace cabextract unzip fontconfig fonts-dejavu-core ffmpeg x11-xserver-utils weston xwayland mesa-utils libgl1-mesa-dri \
+        winehq-staging winetricks xvfb xauth xdotool wmctrl x11-utils imagemagick scrot iproute2 iputils-ping net-tools tini bash strace cabextract unzip fontconfig fonts-dejavu-core ffmpeg x11-xserver-utils weston xwayland mesa-utils libgl1-mesa-dri \
         libgl1:i386 libglx-mesa0:i386 libgl1-mesa-dri:i386 libegl1:i386 libvulkan1:i386 mesa-vulkan-drivers:i386 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 RUN if ! id gilde 2>/dev/null; then if id ubuntu 2>/dev/null; then usermod -l gilde ubuntu && usermod -d /home/gilde -m gilde 2>/dev/null || useradd -m gilde; else useradd -m gilde; fi; fi; mkdir -p /home/gilde && chown gilde:gilde /home/gilde 2>/dev/null || chown 1000:1000 /home/gilde

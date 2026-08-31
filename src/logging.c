@@ -373,10 +373,10 @@ static bool rate_limit_acquire(const char *key, ULONGLONG current_time)
 
 bool log_msg_rate_gate(const char *key)
 {
-    /* Same guards and accounting as log_msg_rate_limited, minus formatting:
-     * hot paths use it to skip gathering diagnostics (syscalls, buffer dumps)
-     * for lines the limiter would suppress anyway. A true return reserves the
-     * interval, so the follow-up message must be emitted unconditionally. */
+    /* The limiter itself, without formatting: hot paths use it to skip
+     * gathering diagnostics (syscalls, buffer dumps) for lines that would be
+     * suppressed anyway. A true return reserves the interval, so the follow-up
+     * message must be emitted unconditionally. */
     if (!key || !g_logctx.critical_section_initialized)
         return false;
 
@@ -397,17 +397,7 @@ bool log_msg_rate_gate(const char *key)
  */
 void log_msg_rate_limited(const char *key, const char *fmt, ...)
 {
-    // If logging not initialized, bail before touching CS (CS not valid yet)
-    if (!g_logctx.critical_section_initialized)
-        return;
-
-    ULONGLONG current_time = GetTickCount64();
-
-    EnterCriticalSection(&g_logctx.critical_section);
-    bool due = rate_limit_acquire(key, current_time);
-    LeaveCriticalSection(&g_logctx.critical_section);
-
-    if (!due)
+    if (!log_msg_rate_gate(key))
         return;
 
     va_list ap;
