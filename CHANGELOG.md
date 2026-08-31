@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `dist/networkfix-<version>.sha256` recorded build-tree paths (`dist/…zip`,
+  `bin/networkfix.asi`), so `sha256sum -c` failed for anyone who downloaded the
+  release assets. It now lists bare filenames and verifies where the files land.
+- The SBOM fell back to the literal version `unknown` whenever the MinHook
+  submodule had no tag, which is what a shallow CI checkout gives. It now falls
+  back to the submodule commit and `make sbom` fails outright if it can read
+  neither.
+
+### Changed
+
+- The SBOM declares the project's own licence (`GPL-3.0-only`) and lists zig
+  under `metadata.tools` instead of as a shipped component.
+- `make install` takes a `GAME_DIR` override and fails with a usable message
+  when the target directory is missing, instead of hardcoding
+  `~/.wine/drive_c/Guild`.
+
 ## [0.4.1] - 2026-08-26
 
 ### Changed

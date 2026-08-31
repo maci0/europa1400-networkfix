@@ -23,6 +23,10 @@ VERSION_FILE := VERSION
 VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo 0.0.0-dev)
 DIST_DIR := dist
 DIST_NAME := networkfix-$(VERSION)
+# Where `make install` drops the ASI: the folder holding
+# Europa1400Gold_TL.exe. Override for a non-default Wine prefix, e.g.
+# make install GAME_DIR="$$HOME/Games/guild/drive_c/Guild"
+GAME_DIR ?= $(HOME)/.wine/drive_c/Guild
 # Warnings are errors for all first-party sources; vendored MinHook is
 # compiled without them (upstream code, off-limits to our lint policy).
 # The extra -W flags pass cleanly across release and test targets; do not
@@ -34,9 +38,17 @@ WARNFLAGS := -Wall -Wextra -Werror -Wshadow -Wstrict-prototypes -Wmissing-protot
              -Wpointer-arith -Wredundant-decls -Wundef -Wwrite-strings \
              -Wnull-dereference -Wfloat-equal -Wdouble-promotion
 MINHOOK_DIR := vendor/minhook
-# Target is 32-bit only; hde64.c excluded to save ~400 LOC of compile
+# Vendored MinHook revision, as recorded in the SBOM. A tagged checkout
+# reports the tag; a shallow one (GitHub Actions clones submodules without
+# tags) falls back to the commit, so the purl always names a resolvable
+# revision instead of the string "unknown".
 MINHOOK_TAG := $(shell git -C $(MINHOOK_DIR) describe --tags --exact-match 2>/dev/null)
-MINHOOK_VERSION := $(if $(MINHOOK_TAG),$(patsubst v%,%,$(MINHOOK_TAG)),unknown)
+MINHOOK_REV := $(shell git -C $(MINHOOK_DIR) rev-parse HEAD 2>/dev/null)
+MINHOOK_VERSION := $(if $(MINHOOK_TAG),$(patsubst v%,%,$(MINHOOK_TAG)),$(MINHOOK_REV))
+MINHOOK_PURL := pkg:github/TsudaKageyu/minhook@$(if $(MINHOOK_TAG),$(MINHOOK_TAG),$(MINHOOK_REV))
+require_minhook_rev = $(if $(MINHOOK_VERSION),,$(error cannot read vendor/minhook revision; run git submodule update --init))
+# SPDX id of this project's own licence (LICENSE is GPL v3 with no "or later").
+LICENSE_ID := GPL-3.0-only
 # SHA256 tool for dist/verify: coreutils on Linux, Perl shasum on stock macOS.
 ifneq ($(shell command -v sha256sum 2>/dev/null),)
 SHA256SUM := sha256sum
@@ -44,6 +56,7 @@ else
 SHA256SUM := $(shell command -v shasum >/dev/null 2>&1 && echo shasum -a 256)
 endif
 require_sha256 = $(if $(SHA256SUM),,$(error no sha256sum or shasum in PATH; needed by dist/verify))
+# Target is 32-bit only; hde64.c excluded to save ~400 LOC of compile
 MINHOOK_SRCS := $(MINHOOK_DIR)/src/buffer.c \
 $(MINHOOK_DIR)/src/hde/hde32.c \
 $(MINHOOK_DIR)/src/hook.c \
@@ -147,11 +160,16 @@ analyze-shellcheck: check-shellcheck
 	$(SHELLCHECK) -x $(SHELL_SCRIPTS)
 
 install: $(TARGET)
-	cp $(TARGET) ~/.wine/drive_c/Guild
+	@test -d "$(GAME_DIR)" || \
+		(echo "ERROR: $(GAME_DIR) does not exist; set GAME_DIR to the folder holding Europa1400Gold_TL.exe" && exit 1)
+	cp $(TARGET) "$(GAME_DIR)"
 
+# zig is the compiler, not a shipped component, so it goes under
+# metadata.tools; components lists only what is linked into the ASI.
 sbom:
+	$(require_minhook_rev)
 	@mkdir -p $(DIST_DIR)
-	@echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"metadata":{"component":{"name":"europa1400-networkfix","version":"$(VERSION)","type":"application"}},"components":[{"name":"minhook","version":"$(MINHOOK_VERSION)","type":"library","purl":"pkg:github/TsudaKageyu/minhook@v$(MINHOOK_VERSION)","licenses":[{"license":{"id":"BSD-2-Clause"}}]},{"name":"zig","version":"$(ZIG_VERSION_EXPECTED)","type":"application"}]}' > $(DIST_DIR)/sbom.json
+	@echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"metadata":{"tools":[{"vendor":"Zig Software Foundation","name":"zig","version":"$(ZIG_VERSION_EXPECTED)"}],"component":{"name":"europa1400-networkfix","version":"$(VERSION)","type":"application","licenses":[{"license":{"id":"$(LICENSE_ID)"}}]}},"components":[{"name":"minhook","version":"$(MINHOOK_VERSION)","type":"library","purl":"$(MINHOOK_PURL)","licenses":[{"license":{"id":"BSD-2-Clause"}}]}]}' > $(DIST_DIR)/sbom.json
 	@echo "sbom: $(DIST_DIR)/sbom.json"
 
 dist: check-zig $(TARGET) sbom
@@ -159,7 +177,10 @@ dist: check-zig $(TARGET) sbom
 	@mkdir -p $(DIST_DIR)
 	@rm -f $(DIST_DIR)/$(DIST_NAME).zip $(DIST_DIR)/$(DIST_NAME).sha256
 	@zip -j $(DIST_DIR)/$(DIST_NAME).zip $(TARGET) LICENSE README.md CHANGELOG.md $(DIST_DIR)/sbom.json >/dev/null
-	@$(SHA256SUM) $(DIST_DIR)/$(DIST_NAME).zip > $(DIST_DIR)/$(DIST_NAME).sha256
-	@$(SHA256SUM) $(TARGET) >> $(DIST_DIR)/$(DIST_NAME).sha256
+	@# Bare filenames, not build-tree paths: the release ships zip, .asi and
+	@# .sha256 side by side, so `sha256sum -c` has to resolve both entries in
+	@# whatever directory the user downloaded (or unzipped) them into.
+	@(cd $(DIST_DIR) && $(SHA256SUM) $(DIST_NAME).zip) > $(DIST_DIR)/$(DIST_NAME).sha256
+	@(cd $(dir $(TARGET)) && $(SHA256SUM) $(notdir $(TARGET))) >> $(DIST_DIR)/$(DIST_NAME).sha256
 	@ls -lh $(DIST_DIR)/$(DIST_NAME).zip $(DIST_DIR)/$(DIST_NAME).sha256
 	@cat $(DIST_DIR)/$(DIST_NAME).sha256

@@ -61,7 +61,7 @@ zig version  # must print 0.16.0 or `make check-zig` will fail
 **Testing on Linux:**
 - Use Wine to run Europa 1400
 - Plugin works identically under Wine
-- Install target: `make install` copies to `~/.wine/drive_c/Guild`
+- Install target: `make install` copies to `GAME_DIR` (default `~/.wine/drive_c/Guild`)
 
 ### macOS Development (Cross-compilation)
 
@@ -120,8 +120,8 @@ make format
 # Clean build artifacts
 make clean
 
-# Install to Wine (Linux only)
-make install
+# Install to Wine (Linux only); GAME_DIR overrides the default prefix
+make install GAME_DIR="$HOME/.wine/drive_c/Guild"
 ```
 
 ### Build Output
@@ -919,6 +919,7 @@ git push origin v1.2.0
 **5. GitHub Release (automated by CI on tag push):**
 - CI runs `make dist` and attaches `bin/networkfix.asi`, `networkfix-<version>.zip`, and `networkfix-<version>.sha256`
 - The zip embeds LICENSE, README, CHANGELOG, and the CycloneDX SBOM (`sbom.json`)
+- The `.sha256` lists bare filenames, so `sha256sum -c` works in whatever directory the assets are downloaded and unzipped into
 - Build provenance is attested automatically via `actions/attest-build-provenance` (SLSA)
 - Write release notes
 

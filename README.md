@@ -79,7 +79,8 @@ The compiled plugins will be in:
 - `make test` - Build and run the automated test suite under Wine (see [Testing](docs/development-guide.md#automated-testing))
 - `make clean` - Remove compiled binaries
 - `make format` - Format source code with clang-format
-- `make install` - Copy plugin to Wine installation (Linux only)
+- `make install` - Copy plugin into `GAME_DIR` (default `~/.wine/drive_c/Guild`, Linux only)
+- `make dist` - Build `dist/networkfix-<version>.zip` plus its SBOM and checksums
 
 ## Installation
 
@@ -90,6 +91,21 @@ The compiled plugins will be in:
   - GOG version - Supported with different hook offsets
   - Other localizations - May require version detection
 
+### Get the plugin
+
+Either build it (see [Building](#building)) or download `networkfix-<version>.zip`
+from the [releases page](https://github.com/maci0/europa1400-networkfix/releases).
+The release also carries `networkfix-<version>.sha256`; unzip beside it and check
+both files:
+
+```bash
+unzip networkfix-0.4.1.zip
+sha256sum -c networkfix-0.4.1.sha256
+```
+
+The zip holds `networkfix.asi`, `LICENSE`, `README.md`, `CHANGELOG.md` and a
+CycloneDX `sbom.json`. Only the `.asi` goes into the game directory.
+
 ### Installation Steps
 
 1. **Locate your game directory**
@@ -98,7 +114,7 @@ The compiled plugins will be in:
    - GOG default: `C:\GOG Games\Europa 1400`
 
 2. **Copy the plugin**
-   - Copy `bin/networkfix.asi` to the game directory
+   - Copy `networkfix.asi` (from the zip, or `bin/networkfix.asi` after a build) to the game directory
    - Place it in the same folder as the game executable
 
 3. **Verify installation**
