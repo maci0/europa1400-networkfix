@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   submodule had no tag, which is what a shallow CI checkout gives. It now falls
   back to the submodule commit and `make sbom` fails outright if it can read
   neither.
+- CI dropped the harness image smoke build. It could never pass: the image
+  `COPY`s `setup_the_guild_gold_2.0.0.5.exe`, which is not redistributable and
+  is gitignored, so every checkout failed at that layer.
+- CI runs the integration tests under `xvfb-run` instead of backgrounding
+  `Xvfb :99 &` before `make test`. The old form raced the server startup and
+  left an orphaned Xvfb holding the step's stdout.
 
 ### Changed
 
@@ -24,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make install` takes a `GAME_DIR` override and fails with a usable message
   when the target directory is missing, instead of hardcoding
   `~/.wine/drive_c/Guild`.
+- `harness/.dockerignore` limits the build context to the installer,
+  `entrypoint.sh` and `drivers/`. `logs/`, `artifacts/` and the fetched
+  dxwrapper DLLs used to add about 1 GB to every `docker build`.
+- dependabot tracks the harness base image (`harness/Dockerfile`) monthly.
 
 ## [0.4.1] - 2026-08-26
 

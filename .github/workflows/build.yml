@@ -110,24 +110,19 @@ jobs:
           make dist
           ls -lh dist/
 
-      - name: Build harness image (smoke)
-        run: |
-          docker build -t gilde-harness:ci harness/ 2>&1 | tail -n 40
-          docker run --rm gilde-harness:ci bash -c 'ls -lh /home/gilde/pfx/drive_c/Guild/Europa1400Gold_TL.exe; cat /harness/dxwrapper.ini 2>&1 | head' 2>&1 | head -n 20
-
       - name: Install Wine
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends wine wine32 xvfb
 
+      # xvfb-run owns the server lifecycle. Backgrounding `Xvfb :99 &` raced
+      # `make test` (wine could reach DISPLAY before the server listened) and
+      # left an orphan holding the step's stdout open.
       - name: Run integration tests
         env:
           WINEDEBUG: '-all'
-          DISPLAY: ':99'
-        run: |
-          Xvfb :99 -screen 0 1024x768x16 &
-          make test
+        run: xvfb-run --auto-servernum make test
 
       - name: Upload build artifacts
         if: always()

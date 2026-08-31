@@ -26,6 +26,10 @@ cp <path>/setup_the_guild_gold_2.0.0.5.exe harness/   # once, baked into image
 docker compose -f harness/docker-compose.yml build
 ```
 
+The installer is not redistributable and is gitignored, so CI cannot build
+this image; it is a local-only target. `harness/.dockerignore` keeps the build
+context down to the installer, `entrypoint.sh` and `drivers/`.
+
 ## Run
 
 ```bash

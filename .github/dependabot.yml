@@ -5,6 +5,11 @@ updates:
     schedule:
       interval: weekly
     labels: [deps, ci]
+  - package-ecosystem: docker
+    directory: /harness
+    schedule:
+      interval: monthly
+    labels: [deps, harness]
   - package-ecosystem: gitsubmodule
     directory: /
     schedule:
