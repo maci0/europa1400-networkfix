@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-28
+
 ### Fixed
 
 - `dist/networkfix-<version>.sha256` recorded build-tree paths (`dist/…zip`,
@@ -34,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `entrypoint.sh` and `drivers/`. `logs/`, `artifacts/` and the fetched
   dxwrapper DLLs used to add about 1 GB to every `docker build`.
 - dependabot tracks the harness base image (`harness/Dockerfile`) monthly.
+- Harness base image is Ubuntu 26.04 (was 24.04).
+- CI: astral-sh/setup-uv 10.2.0 (was 10.0.1) and softprops/action-gh-release 3.0.3 (was 3.0.2).
 
 ## [0.4.1] - 2026-08-26
 
@@ -234,7 +238,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial ASI plugin with MinHook hooks for `recv`/`send`/`GetTickCount`/`srv_gameStreamReader`, pattern matcher,
   SHA256 version detection, and Wine integration tests (`make test`).
 
-[Unreleased]: https://github.com/maci0/europa1400-networkfix/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/maci0/europa1400-networkfix/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/maci0/europa1400-networkfix/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/maci0/europa1400-networkfix/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/maci0/europa1400-networkfix/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/maci0/europa1400-networkfix/compare/v0.2.0...v0.3.0
