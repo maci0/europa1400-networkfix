@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-21
+
+### Changed
+
+- CI: update actions/upload-artifact from 7.0.1 to 7.0.2 and astral-sh/setup-uv from 10.2.0 to 10.3.0.
+
 ## [0.5.0] - 2026-09-28
 
 ### Fixed
